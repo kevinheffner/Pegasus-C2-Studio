@@ -1,0 +1,14 @@
+node_modules/
+dist/
+out/
+probe/
+*.log
+.env
+# user output / local state
+scenarios/saved/
+# third-party sample files (download separately, see README)
+samples/imports/
+# reference images (not part of the application code)
+*.avif
+Mission-1.png
+example-outputs/

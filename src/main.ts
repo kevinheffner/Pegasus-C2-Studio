@@ -1,0 +1,1225 @@
+import './style.css';
+import ms from 'milsymbol';
+import maplibregl from 'maplibre-gl';
+import { AO_PRESETS, AIR_OPTIONS, DEFAULT_PARAMS, FORCES, TEMPLATES, type BattleParams } from './scenario/catalog';
+import { CAMERA_PATHS, CameraDirector, type CameraPath } from './render/camera';
+import { generate, type GenOptions } from './scenario/generator';
+import { Simulation, sideOf, type ViewOptions } from './scenario/sim';
+import type { CameraKey, LonLat, Scenario } from './scenario/types';
+import { dtg } from './render/hud';
+import { recordVideo, download, startLiveRecording, type LiveRecording } from './export/recorder';
+import { saveOutput, saveTarget, setSaveTarget, chooseFolder, folderName } from './export/save';
+import { importFile } from './import/overlay';
+import { extentKm, toMgrs } from './geo/geo';
+import { Panel, type PanelConfig } from './app/panel';
+import { buildReports, type ChatLine, type Report } from './app/reports';
+import { BUILTIN_PACKAGES, deleteSaved, listSaved, loadSaved, saveToDisk, type ScenarioPackage, type Settings } from './app/library';
+import { initHome } from './home';
+import { initDock, type Dock } from './app/dock';
+import { openLayouts, applyDefaultLayout, type LayoutHost } from './app/layouts';
+
+const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
+const sel = (id: string) => $<HTMLSelectElement>(id);
+const inp = (id: string) => $<HTMLInputElement>(id);
+const REF_W = 1280; // reference frame width for "zoom" settings
+const params = new URLSearchParams(location.search);
+const headless = params.has('headless');
+
+// ================= controls =================
+const fill = (s: HTMLSelectElement, items: { id: string; name: string }[]) => (s.innerHTML = items.map((i) => `<option value="${i.id}">${i.name}</option>`).join(''));
+fill(sel('ao'), [...AO_PRESETS, { id: 'custom', name: 'Custom (click on map)' }]);
+fill(sel('wAo'), [{ id: '', name: '— select —' }, ...AO_PRESETS]);
+fill(sel('template'), TEMPLATES);
+fill(sel('blue'), FORCES.filter((f) => f.side === 'blue'));
+fill(sel('red'), FORCES.filter((f) => f.side === 'red'));
+fill(sel('air'), AIR_OPTIONS);
+sel('air').value = 'all';
+sel('camPath').innerHTML = CAMERA_PATHS.map((c) => `<option value="${c.id}" title="${c.description.replace(/"/g, '&quot;')}">${c.name}${c.needs3d ? ' (3D)' : ''}</option>`).join('');
+
+const PARAM_KEYS = ['blueQuality', 'lethality', 'defenderAdvantage', 'tempo', 'prepMinutes', 'durationMin'] as const;
+const showParam = (k: string) => ($('v-' + k).textContent = k === 'durationMin' && inp('p-' + k).value === '0' ? 'auto' : inp('p-' + k).value);
+for (const k of PARAM_KEYS) {
+  inp('p-' + k).addEventListener('input', () => showParam(k));
+  showParam(k);
+}
+
+// ================= state =================
+const panels: Panel[] = [];
+let active!: Panel;
+let layout: 1 | 4 = 1;
+let multiAO = false;
+let t = 0;
+let playing = false;
+let customCenter: LonLat | null = null;
+const reportCache = new WeakMap<Scenario, { reports: Report[]; chat: ChatLine[] }>();
+const userChat: ChatLine[] = [];
+const viewsEl = $('views');
+
+const visiblePanels = () => (layout === 1 ? [active] : panels.slice(0, 4));
+const scenarioOf = () => active?.scenario ?? null;
+const viewOpts = (): ViewOptions => ({ trailMin: Number(sel('trails').value) });
+const hudOpts = () => ({ banner: inp('banner').value, markStyle: sel('markStyle').value as 'none' | 'corner' | 'banner', chrome: inp('L-hud').checked });
+const zoomAdj = (p: Panel) => Math.log2(Math.max(100, p.captureRect().w) / REF_W);
+const maxDuration = () => Math.max(1, ...visiblePanels().map((p) => p.scenario?.meta.durationMin ?? 0));
+
+// ---------- panel helpers that respect the reference zoom ----------
+function applyCam(p: Panel, cam: CameraKey) {
+  p.view.setCamera({ ...cam, zoom: cam.zoom + zoomAdj(p) });
+}
+function refCamera(p: Panel): CameraKey {
+  const c = p.currentCamera(t);
+  return { ...c, zoom: c.zoom - zoomAdj(p) };
+}
+function clipBase(p: Panel): CameraKey {
+  if (p.scenario && p.camPath !== 'static' && p.camPath !== 'keyframes') return { t: 0, center: p.scenario.view.center, zoom: p.scenario.view.zoom, bearing: 0, pitch: 0 };
+  return refCamera(p);
+}
+function directed(p: Panel, prog: number, tt: number): CameraKey | null {
+  if (!p.director || p.camPath === 'static') return null;
+  return p.director.camera(p.camPath, prog, tt, p.cameraBase ?? clipBase(p), p.mode);
+}
+function flyToAO(p: Panel) {
+  if (!p.scenario) return;
+  applyCam(p, { t: 0, center: p.scenario.view.center, zoom: p.scenario.view.zoom, bearing: p.mode === '3d' ? p.scenario.meta.axis ?? 0 : 0, pitch: p.mode === '3d' ? 55 : 0 });
+}
+
+/** top-bar mission title: the operation of the active view (or a theater overview) */
+function updateMissionTitle() {
+  const sc = active?.scenario;
+  $('scnName').textContent = multiAO ? 'THEATER OVERVIEW · 4 AREAS OF OPERATIONS' : sc ? sc.meta.title ?? sc.meta.name : '—';
+}
+
+// ================= panels & layout =================
+async function createPanel(i: number, cfg: PanelConfig) {
+  const preset = AO_PRESETS[0];
+  const p = new Panel(i, viewsEl, cfg, preset.center, preset.zoom, {
+    activate: (x) => setActive(x),
+    maximize: (x) => {
+      setActive(x);
+      setLayout(layout === 1 ? 4 : 1);
+    },
+    changed: (x, what) => {
+      if (what === 'cam') x.cameraBase = clipBase(x);
+      if (x === active) syncActiveControls();
+      renderAll();
+    },
+  });
+  panels[i] = p;
+  await p.init();
+  let lastW = 0;
+  new ResizeObserver(() => {
+    p.fit();
+    const w = p.captureRect().w;
+    // keep the same ground framing when the panel changes size
+    if (lastW > 0 && w > 0 && Math.abs(w - lastW) > 2) p.view.map.setZoom(p.view.map.getZoom() + Math.log2(w / lastW));
+    if (w > 0) lastW = w;
+    renderPanel(p);
+  }).observe(p.el.querySelector('.vbody')!);
+  p.view.map.on('move', () => {
+    renderHud(p);
+    if (p === active) syncMapWidget();
+  });
+  p.view.map.on('movestart', (e: any) => {
+    if (e.originalEvent && p.camPath !== 'static' && (playing || live || flying)) {
+      p.camPath = 'static';
+      p.syncControls();
+      if (p === active) syncActiveControls();
+    }
+  });
+  p.view.map.on('moveend', (e: any) => {
+    if (e.originalEvent && inp('linkViews').checked && !multiAO && p === active) linkFrom(p);
+  });
+  p.view.map.on('mousemove', (e) => {
+    if (p === active) $('cursorPos').textContent = `${toMgrs(e.lngLat.lng, e.lngLat.lat, 5)}  ·  ${e.lngLat.lat.toFixed(5)}, ${e.lngLat.lng.toFixed(5)}`;
+  });
+  p.view.map.on('click', (e) => {
+    if (!picking || p !== active) return;
+    customCenter = [e.lngLat.lng, e.lngLat.lat];
+    p.view.map.easeTo({ center: e.lngLat, duration: 500 });
+    sel('ao').value = 'custom';
+    endPicking();
+    scheduleRegen();
+  });
+  return p;
+}
+
+function linkFrom(src: Panel) {
+  const c = refCamera(src);
+  for (const p of visiblePanels()) if (p !== src && p.camPath === 'static') applyCam(p, { ...c, bearing: p.view.map.getBearing(), pitch: p.view.map.getPitch() });
+}
+
+async function ensurePanels(n: number, cfgs?: PanelConfig[]) {
+  const defaults: PanelConfig[] = [
+    { look: 'topo', mode: '2d', camPath: 'static', fog: false, title: 'VIEW 1 · MAP' },
+    { look: 'vector-topo', mode: '3d', camPath: 'overwatch', fog: false, title: 'VIEW 2 · 3D' },
+    { look: 'c2-dark', mode: '2d', camPath: 'static', fog: true, title: 'VIEW 3 · BLUE COP' },
+    { look: 'c2-sat', mode: '3d', camPath: 'commander', fog: false, title: 'VIEW 4 · ISR' },
+  ];
+  for (let i = 0; i < n; i++) {
+    if (!panels[i]) {
+      await createPanel(i, cfgs?.[i] ?? defaults[i]);
+      // share the scenario in same-AO mode
+      if (!multiAO && panels[0]?.scenario && i > 0) attachScenario(panels[i], panels[0].scenario, true);
+    }
+  }
+}
+
+function setActive(p: Panel) {
+  if (active === p) return;
+  active = p;
+  panels.forEach((x) => x?.el.classList.toggle('active', x === p));
+  if (multiAO && p.settings) applySettings(p.settings, false);
+  syncActiveControls();
+  updateMissionTitle();
+  renderWidgets(true);
+}
+
+async function setLayout(n: 1 | 4) {
+  layout = n;
+  if (n === 4) await ensurePanels(4);
+  viewsEl.className = `layout-${n}`;
+  $('btnLayout1').classList.toggle('on', n === 1);
+  $('btnLayout4').classList.toggle('on', n === 4);
+  requestAnimationFrame(() => {
+    panels.forEach((p) => p?.fit());
+    renderAll();
+  });
+  updateTimeMax();
+}
+
+// ================= scenario attach / generate =================
+function attachScenario(p: Panel, sc: Scenario, fly: boolean) {
+  const sim = new Simulation(sc);
+  const dir = new CameraDirector(sc);
+  p.setScenario(sc, sim, dir, false);
+  if (fly) flyToAO(p);
+  p.cameraBase = clipBase(p);
+}
+
+function loadScenario(sc: Scenario, fly = true) {
+  if (multiAO) attachScenario(active, sc, fly);
+  else for (const p of panels) if (p) attachScenario(p, sc, fly);
+  t = 0;
+  updateTimeMax();
+  updateMissionTitle();
+  updateKeyInfo();
+  updateVideoHint();
+  renderAll();
+  renderWidgets(true);
+}
+
+function updateTimeMax() {
+  inp('time').max = String(maxDuration());
+  inp('vto').placeholder = String(scenarioOf()?.meta.durationMin ?? '');
+}
+
+const SCENARIO_KEYS = ['ao', 'zoom', 'axis', 'template', 'blue', 'red', 'air', 'movement', 'riverine', 'seed', ...PARAM_KEYS.map((k) => 'p-' + k), 'p-counterattack'];
+
+function genOptionsFrom(s: Settings, p: Panel): GenOptions {
+  const get = (k: string, d: string) => (s[k] !== undefined ? String(s[k]) : d);
+  const preset = AO_PRESETS.find((a) => a.id === s.ao);
+  const center: LonLat = typeof s.center === 'string' && s.center ? (s.center.split(',').map(Number) as LonLat) : preset ? preset.center : AO_PRESETS[0].center;
+  const P: BattleParams = { ...DEFAULT_PARAMS };
+  for (const k of PARAM_KEYS) if (s['p-' + k] !== undefined) (P as any)[k] = Number(s['p-' + k]);
+  if (s['p-counterattack'] !== undefined) P.counterattack = !!s['p-counterattack'];
+  return {
+    center,
+    zoom: Number(get('zoom', '11.7')),
+    axis: Number(get('axis', String(preset?.axis ?? 90))),
+    template: get('template', 'deliberate-attack'),
+    blue: get('blue', 'abct'),
+    red: get('red', 'mr-bde'),
+    air: get('air', 'all') as GenOptions['air'],
+    movement: get('movement', 'roads') as GenOptions['movement'],
+    riverine: s.riverine === true || s.riverine === 'true',
+    seed: Number(get('seed', '7')) || 1,
+    params: P,
+    viewPx: [REF_W, 720],
+    onProgress: (m) => ($('genStatus').textContent = m),
+  };
+}
+
+let genBusy = false;
+async function generateFor(p: Panel | null, s: Settings) {
+  genBusy = true;
+  $<HTMLButtonElement>('generate').disabled = true;
+  setPlaying(false);
+  try {
+    const t0 = performance.now();
+    const opts = genOptionsFrom(s, p ?? active);
+    const sc = await generate(opts);
+    if (p && multiAO) {
+      p.settings = { ...s };
+      attachScenario(p, sc, true);
+      updateMissionTitle();
+    } else loadScenario(sc, true);
+    t = 0;
+    updateTimeMax();
+    renderAll();
+    renderWidgets(true);
+    $('genStatus').textContent = `Loaded ${sc.units.length} tracks, ${sc.graphics.length} control measures in ${((performance.now() - t0) / 1000).toFixed(1)} s.`;
+  } catch (e) {
+    console.error(e);
+    $('genStatus').textContent = 'Load failed: ' + (e as Error).message;
+  } finally {
+    genBusy = false;
+    $<HTMLButtonElement>('generate').disabled = false;
+  }
+}
+const doGenerate = () => generateFor(multiAO ? active : null, collectScenarioSettings());
+
+let regenTimer: number | undefined;
+function scheduleRegen() {
+  if (!inp('autoRegen').checked) return;
+  clearTimeout(regenTimer);
+  regenTimer = window.setTimeout(doGenerate, 450);
+}
+
+// ================= settings <-> form =================
+function settingsElements(): (HTMLInputElement | HTMLSelectElement)[] {
+  return [...document.querySelectorAll<HTMLInputElement | HTMLSelectElement>('#settingsDlg input[id], #settingsDlg select[id], #widget input[id], #widget select[id], #speed')].filter(
+    (e) => !(e instanceof HTMLInputElement && e.type === 'file') && !['wAo', 'wZoom', 'chatInput', 'camPath'].includes(e.id),
+  );
+}
+function collectSettings(): Settings {
+  const s: Settings = {};
+  for (const e of settingsElements()) s[e.id] = e instanceof HTMLInputElement && e.type === 'checkbox' ? e.checked : e.value;
+  if (sel('ao').value === 'custom' && customCenter) s.center = customCenter.join(',');
+  return s;
+}
+function collectScenarioSettings(): Settings {
+  const all = collectSettings();
+  const s: Settings = {};
+  for (const k of [...SCENARIO_KEYS, 'center']) if (all[k] !== undefined) s[k] = all[k];
+  return s;
+}
+function applySettings(s: Settings, includeView = true) {
+  for (const [k, v] of Object.entries(s)) {
+    if (k === 'center' || k === 'camPath') continue;
+    if (!includeView && !SCENARIO_KEYS.includes(k)) continue;
+    const e = document.getElementById(k) as HTMLInputElement | HTMLSelectElement | null;
+    if (!e) continue;
+    if (e instanceof HTMLInputElement && e.type === 'checkbox') e.checked = v === true || v === 'true';
+    else e.value = String(v);
+  }
+  customCenter = typeof s.center === 'string' && s.center ? (s.center.split(',').map(Number) as LonLat) : null;
+  for (const k of PARAM_KEYS) showParam(k);
+  $('zoomVal').textContent = inp('zoom').value;
+  tplDesc();
+  applyDisplayToggles();
+  updateVideoHint();
+  updateAoInfo();
+  sel('recTargetTop').value = sel('recTarget').value;
+}
+
+// ================= rendering =================
+function renderHud(p: Panel) {
+  p.drawPreviewHud(p.stateAt(t, viewOpts()), hudOpts());
+}
+function renderPanel(p: Panel) {
+  const st = p.stateAt(t, viewOpts());
+  if (st) p.view.update(st);
+  p.drawPreviewHud(st, hudOpts());
+}
+function renderAll() {
+  for (const p of visiblePanels()) renderPanel(p);
+  updateTimeLabel();
+}
+function updateTimeLabel() {
+  const sc = scenarioOf();
+  if (!sc) return;
+  const now = new Date(new Date(sc.meta.start).getTime() + Math.min(t, sc.meta.durationMin) * 60000);
+  const tt = `T+${String(Math.floor(t / 60)).padStart(2, '0')}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
+  $('timeLabel').textContent = `${dtg(now)}   ${tt}`;
+  $('topDtg').textContent = dtg(now);
+  inp('time').value = String(t);
+}
+
+// ================= playback loop =================
+let last = 0;
+let lastWidget = 0;
+function loop(ts: number) {
+  const dt = last ? (ts - last) / 1000 : 0;
+  if (playing && active?.scenario) {
+    t += dt * Number(sel('speed').value);
+    const end = live || flying ? clipEnd() : maxDuration();
+    if (t >= end) {
+      t = end;
+      if (live || flying) finishClip();
+      else setPlaying(false);
+    }
+    for (const p of visiblePanels()) {
+      const cam = directed(p, p.scenario ? Math.min(1, t / p.scenario.meta.durationMin) : 0, t);
+      if (cam) applyCam(p, cam);
+    }
+    renderAll();
+    if (flying) sampleFlight(ts);
+    if (ts - lastWidget > 400) {
+      lastWidget = ts;
+      renderWidgets();
+    }
+  }
+  applyPad(dt);
+  last = ts;
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+function setPlaying(p: boolean) {
+  if (p && !playing) for (const x of visiblePanels()) x.cameraBase = clipBase(x);
+  playing = p;
+  $('play').textContent = p ? '❚❚' : '▶';
+  if (p && t >= maxDuration()) t = 0;
+}
+$('play').onclick = () => setPlaying(!playing);
+inp('time').oninput = () => {
+  t = Number(inp('time').value);
+  for (const p of visiblePanels()) {
+    const cam = directed(p, p.scenario ? Math.min(1, t / p.scenario.meta.durationMin) : 0, t);
+    if (cam) applyCam(p, cam);
+  }
+  renderAll();
+  renderWidgets(true);
+};
+
+// ================= top bar =================
+const settingsDlg = $<HTMLDialogElement>('settingsDlg');
+const libraryDlg = $<HTMLDialogElement>('libraryDlg');
+const saveDlg = $<HTMLDialogElement>('saveDlg');
+document.querySelectorAll<HTMLButtonElement>('[data-close]').forEach((b) => (b.onclick = () => (b.closest('dialog') as HTMLDialogElement).close()));
+$('btnSettings').onclick = () => settingsDlg.showModal();
+$('btnLibrary').onclick = $('ioLibrary').onclick = () => openLibrary();
+$('btnSave').onclick = $('ioSave').onclick = () => openSave();
+$('btnLayout1').onclick = () => setLayout(1);
+$('btnLayout4').onclick = () => setLayout(4);
+$('btnShot').onclick = () => $('shot').click();
+$('btnRecord').onclick = () => {
+  if (!recording && !live && !screenRec && !flying) $('record').click();
+};
+$('btnStop').onclick = () => {
+  if (recording) recSignal.cancelled = true;
+  else if (live || screenRec || flying) finishClip();
+};
+// where recordings are saved (also changeable in the save dialog)
+sel('saveTo').value = saveTarget();
+sel('saveTo').onchange = async () => {
+  if (sel('saveTo').value === 'folder') {
+    try {
+      $('saveFolder').textContent = '→ ' + (await chooseFolder());
+    } catch (e) {
+      $('saveFolder').textContent = (e as Error).message;
+      sel('saveTo').value = saveTarget();
+    }
+  } else {
+    setSaveTarget(sel('saveTo').value as any);
+    $('saveFolder').textContent = sel('saveTo').value === 'project' ? '→ out/recordings/' : '';
+  }
+};
+$('savePick').onclick = async () => {
+  try {
+    $('saveFolder').textContent = '→ ' + (await chooseFolder());
+    sel('saveTo').value = 'folder';
+  } catch (e) {
+    $('saveFolder').textContent = (e as Error).message;
+  }
+};
+void folderName;
+sel('recTargetTop').onchange = () => (sel('recTarget').value = sel('recTargetTop').value);
+sel('recTarget').addEventListener('change', () => (sel('recTargetTop').value = sel('recTarget').value));
+document.querySelectorAll<HTMLButtonElement>('#setTabs button').forEach(
+  (b) =>
+    (b.onclick = () => {
+      document.querySelectorAll('#setTabs button').forEach((x) => x.classList.toggle('on', x === b));
+      document.querySelectorAll<HTMLElement>('#settingsDlg .tab').forEach((x) => x.classList.toggle('on', x.dataset.tab === b.dataset.tab));
+    }),
+);
+document.querySelector<HTMLElement>('#settingsDlg .tab[data-tab="scenario"]')!.classList.add('on');
+
+// ================= widget dock =================
+let dock!: Dock;
+function setupDock() {
+  dock = initDock({
+    names: { map: 'MAP', layers: 'LAYERS', intel: 'INTEL', orbat: 'ORBAT', fires: 'FIRES', chat: 'CHAT' },
+    defaults: ['intel', 'orbat'],
+    changed: () => {
+      renderWidgets(true);
+      requestAnimationFrame(() => panels.forEach((p) => p?.fit()));
+    },
+  });
+}
+// ================= workspace layouts (save as default / by name) =================
+const TOGGLE_IDS = ['L-friend', 'L-hostile', 'L-air', 'L-graphics', 'L-labels', 'L-fires', 'L-hud', 'strength', 'trails'];
+const layoutHost: LayoutHost = {
+  capture: () => ({
+    dock: dock.getState(),
+    views: { layout, active: active.idx, panels: panels.filter(Boolean).map((p) => p.config()) },
+    toggles: Object.fromEntries(TOGGLE_IDS.map((id) => {
+      const e = document.getElementById(id) as HTMLInputElement | HTMLSelectElement;
+      return [id, e instanceof HTMLInputElement && e.type === 'checkbox' ? e.checked : e.value];
+    })),
+  }),
+  async apply(l) {
+    dock.setState(l.dock);
+    if (l.views?.panels?.length) {
+      await ensurePanels(l.views.panels.length, l.views.panels);
+      for (let i = 0; i < l.views.panels.length; i++) if (panels[i]) await panels[i].applyConfig(l.views.panels[i]);
+    }
+    if (l.views) {
+      await setLayout(l.views.layout);
+      setActive(panels[Math.min(l.views.active ?? 0, panels.length - 1)] ?? panels[0]);
+    }
+    for (const [id, v] of Object.entries(l.toggles ?? {})) {
+      const e = document.getElementById(id) as HTMLInputElement | HTMLSelectElement | null;
+      if (!e) continue;
+      if (e instanceof HTMLInputElement && e.type === 'checkbox') e.checked = !!v;
+      else e.value = String(v);
+    }
+    applyDisplayToggles();
+    renderAll();
+    renderWidgets(true);
+  },
+};
+$('btnLayouts').onclick = () => openLayouts(layoutHost);
+
+/** API compatibility: make sure a widget is open in the dock */
+function showWidget(w: string) {
+  if (!dock.open().includes(w)) dock.add(w);
+}
+
+// ----- MAP widget -----
+function syncMapWidget() {
+  if (!active) return;
+  inp('wZoom').value = String((active.view.map.getZoom() - zoomAdj(active)).toFixed(1));
+}
+function syncActiveControls() {
+  $('wActive').textContent = active.title;
+  document.querySelectorAll<HTMLButtonElement>('#wMode button').forEach((b) => b.classList.toggle('on', b.dataset.m === active.mode));
+  sel('camPath').value = active.camPath;
+  updateCamDesc();
+  syncMapWidget();
+  updateKeyInfo();
+  updateAoInfo();
+}
+inp('wZoom').oninput = () => active.view.map.jumpTo({ zoom: Number(inp('wZoom').value) + zoomAdj(active) });
+$('wZoomIn').onclick = () => active.view.map.easeTo({ zoom: active.view.map.getZoom() + 0.5, duration: 300 });
+$('wZoomOut').onclick = () => active.view.map.easeTo({ zoom: active.view.map.getZoom() - 0.5, duration: 300 });
+$('wHome').onclick = () => flyToAO(active);
+$('wNorth').onclick = () => active.view.map.easeTo({ bearing: 0, pitch: active.mode === '3d' ? 45 : 0, duration: 500 });
+document.querySelectorAll<HTMLButtonElement>('#wMode button').forEach((b) => (b.onclick = () => (active.setMode(b.dataset.m as '2d' | '3d'), syncActiveControls())));
+sel('wAo').onchange = () => {
+  const a = AO_PRESETS.find((x) => x.id === sel('wAo').value);
+  if (a) applyCam(active, { t: 0, center: a.center, zoom: a.zoom, bearing: 0, pitch: active.mode === '3d' ? 45 : 0 });
+  sel('wAo').value = '';
+};
+let padAct: string | null = null;
+document.querySelectorAll<HTMLButtonElement>('#camPad button').forEach((b) =>
+  b.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    if (active.camPath !== 'static') {
+      active.camPath = 'static';
+      active.syncControls();
+      syncActiveControls();
+    }
+    padAct = b.dataset.act!;
+  }),
+);
+window.addEventListener('pointerup', () => (padAct = null));
+function applyPad(dt: number) {
+  if (!padAct || dt <= 0 || dt > 0.25) return;
+  const m = active.view.map;
+  const k = ({ rotL: [-45, 0, 0], rotR: [45, 0, 0], tiltUp: [0, -25, 0], tiltDown: [0, 25, 0], zoomIn: [0, 0, 0.6], zoomOut: [0, 0, -0.6] } as Record<string, number[]>)[padAct];
+  if (!k) return;
+  m.jumpTo({ bearing: m.getBearing() + k[0] * dt, pitch: Math.max(0, Math.min(75, m.getPitch() + k[1] * dt)), zoom: m.getZoom() + k[2] * dt });
+  if (!playing) renderPanel(active);
+}
+
+// ----- LAYERS widget -----
+function applyDisplayToggles() {
+  for (const p of panels) {
+    if (!p) continue;
+    for (const k of ['friend', 'hostile', 'air', 'graphics', 'labels', 'fires'] as const) p.view.layers[k] = inp('L-' + k).checked;
+    p.view.showStrength = inp('strength').checked;
+    p.view.applyLayers();
+  }
+}
+['L-friend', 'L-hostile', 'L-air', 'L-graphics', 'L-labels', 'L-fires', 'strength'].forEach((id) => (inp(id).onchange = () => (applyDisplayToggles(), renderAll())));
+inp('L-hud').onchange = renderAll;
+sel('trails').onchange = renderAll;
+inp('banner').oninput = renderAll;
+sel('markStyle').onchange = renderAll;
+
+// ----- INTEL / ORBAT / FIRES / CHAT widgets -----
+let intelFilter = 'all';
+document.querySelectorAll<HTMLButtonElement>('#intelFilter button').forEach(
+  (b) =>
+    (b.onclick = () => {
+      intelFilter = b.dataset.k!;
+      document.querySelectorAll('#intelFilter button').forEach((x) => x.classList.toggle('on', x === b));
+      renderWidgets(true);
+    }),
+);
+const symCache = new Map<string, string>();
+const miniSym = (sidc: string) => {
+  let s = symCache.get(sidc);
+  if (!s) {
+    s = new ms.Symbol(sidc, { size: 14, colorMode: 'Light' } as any).asSVG();
+    symCache.set(sidc, s);
+  }
+  return s;
+};
+const esc = (s: string) => s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]!);
+let marker: maplibregl.Marker | null = null;
+function flyTo(pos: LonLat) {
+  if (active.camPath !== 'static') {
+    active.camPath = 'static';
+    active.syncControls();
+    syncActiveControls();
+  }
+  const z = Math.max(active.view.map.getZoom(), (active.scenario?.view.zoom ?? 11.7) + 1 + zoomAdj(active));
+  active.view.map.easeTo({ center: pos, zoom: z, duration: 800 });
+  marker?.remove();
+  const el = document.createElement('div');
+  el.style.cssText = 'width:34px;height:34px;border:2px solid #f0b03d;border-radius:50%;box-shadow:0 0 12px #f0b03d;';
+  marker = new maplibregl.Marker({ element: el }).setLngLat(pos).addTo(active.view.map);
+  setTimeout(() => marker?.remove(), 3500);
+}
+let lastWidgetKey = '';
+function renderWidgets(force = false) {
+  const sc = scenarioOf();
+  if (!sc) return;
+  const key = `${dock?.open().join(',')}|${Math.floor(t)}|${intelFilter}|${active.idx}|${sc.meta.start}`;
+  if (!force && key === lastWidgetKey) return;
+  lastWidgetKey = key;
+  const D = (x: number) => dtg(new Date(new Date(sc.meta.start).getTime() + x * 60000));
+  let rc = reportCache.get(sc);
+  if (!rc) reportCache.set(sc, (rc = buildReports(sc)));
+  for (const widget of dock?.open() ?? []) {
+  if (widget === 'intel') {
+    const list = rc.reports.filter((r) => r.t <= t && r.kind !== 'FIRE' && (intelFilter === 'all' || r.kind === intelFilter)).slice(-80).reverse();
+    $('intelList').innerHTML = list.length
+      ? list.map((r, i) => `<div class="ritem ${r.severity}" data-i="${i}"><div class="rt"><span class="rk">${r.kind}</span><span>${D(r.t)}</span></div><div class="rtitle">${esc(r.title)}</div><pre>${esc(r.body)}</pre></div>`).join('')
+      : '<div class="empty">No reports.</div>';
+    $('intelList').querySelectorAll<HTMLElement>('.ritem').forEach((el) => {
+      el.onclick = () => {
+        el.classList.toggle('open');
+        const r = list[Number(el.dataset.i)];
+        if (r.pos) flyTo(r.pos);
+      };
+    });
+  } else if (widget === 'fires') {
+    const list = rc.reports.filter((r) => r.t <= t && r.kind === 'FIRE').slice(-60).reverse();
+    const activeFires = (sc.events ?? []).filter((e) => e.type === 'fire' && e.kind === 'indirect' && e.t <= t && e.t + e.duration >= t).length;
+    $('firesActive').textContent = activeFires ? `${activeFires} rounds in the air` : '';
+    $('firesList').innerHTML = list.length
+      ? list.map((r, i) => `<div class="ritem" data-i="${i}"><div class="rt"><span class="rk">FIRE MISSION</span><span>${D(r.t)}</span></div><div class="rtitle">${esc(r.title)}</div><pre>${esc(r.body)}</pre></div>`).join('')
+      : '<div class="empty">No fire missions yet.</div>';
+    $('firesList').querySelectorAll<HTMLElement>('.ritem').forEach((el) => {
+      el.onclick = () => {
+        el.classList.toggle('open');
+        const r = list[Number(el.dataset.i)];
+        if (r.pos) flyTo(r.pos);
+      };
+    });
+  } else if (widget === 'orbat') {
+    const st = active.stateAt(t, viewOpts());
+    if (!st) continue;
+    const rows = (side: 'friend' | 'hostile') =>
+      st.units
+        .filter((u) => sideOf(u.sidc) === side)
+        .sort((a, b) => (a.unit.air ? 1 : 0) - (b.unit.air ? 1 : 0))
+        .map((u) => {
+          const m = u.unit.modifiers ?? {};
+          const pct = Math.round(u.strength * 100);
+          const color = pct >= 70 ? 'var(--green)' : pct >= 40 ? 'var(--amber)' : 'var(--rec)';
+          const unknown = side === 'hostile' && active.fog;
+          return `<div class="orb ${u.status === 'destroyed' ? 'dead' : ''}" data-id="${u.unit.id}"><span class="sym">${miniSym(u.sidc)}</span><span class="nm">${esc(m.uniqueDesignation ?? u.unit.id)}${m.higherFormation ? ' / ' + esc(m.higherFormation) : ''}${u.stale ? ' <i style="color:var(--muted)">(last known)</i>' : ''}</span>${
+            u.unit.air || unknown ? '<span class="pct">—</span>' : `<span class="bar"><i style="width:${pct}%;background:${color}"></i></span><span class="pct">${pct}%</span>`
+          }</div>`;
+        })
+        .join('');
+    $('orbatList').innerHTML = `<div class="orbHead f">FRIENDLY</div>${rows('friend')}<div class="orbHead h">ENEMY ${active.fog ? '(Blue COP – detected only)' : ''}</div>${rows('hostile') || '<div class="empty">No enemy units detected.</div>'}`;
+    $('orbatList').querySelectorAll<HTMLElement>('.orb').forEach((el) => {
+      el.onclick = () => {
+        const u = st.units.find((x) => x.unit.id === el.dataset.id);
+        if (u) flyTo(u.pos);
+      };
+    });
+  } else if (widget === 'chat') {
+    const lines = [...rc.chat.filter((c) => c.t <= t), ...userChat.filter((c) => c.t <= t)].sort((a, b) => a.t - b.t).slice(-120);
+    const el = $('chatList');
+    el.innerHTML = lines.map((c) => `<div class="cl ${c.from === 'ME' ? 'me' : ''}"><span class="ct">${D(c.t).slice(0, 6)}Z</span><b>${esc(c.from)}:</b> ${esc(c.text)}</div>`).join('') || '<div class="empty">Channel quiet.</div>';
+    const body = dock.body('chat');
+    if (body) body.scrollTop = body.scrollHeight;
+  }
+  }
+}
+$('chatSend').onclick = () => {
+  const v = inp('chatInput').value.trim();
+  if (!v) return;
+  userChat.push({ t, from: 'ME', text: v });
+  inp('chatInput').value = '';
+  renderWidgets(true);
+};
+inp('chatInput').onkeydown = (e) => e.key === 'Enter' && $('chatSend').click();
+
+// ================= settings modal: scenario tab =================
+const tplDesc = () => ($('tplDesc').textContent = TEMPLATES.find((x) => x.id === sel('template').value)?.description ?? '');
+sel('template').addEventListener('change', tplDesc);
+sel('ao').onchange = () => {
+  const a = AO_PRESETS.find((x) => x.id === sel('ao').value);
+  if (a) {
+    customCenter = null;
+    sel('axis').value = String(a.axis);
+    applyCam(active, { t: 0, center: a.center, zoom: Number(inp('zoom').value), bearing: 0, pitch: active.mode === '3d' ? 45 : 0 });
+  }
+  scheduleRegen();
+};
+inp('zoom').oninput = () => {
+  $('zoomVal').textContent = inp('zoom').value;
+  updateAoInfo();
+};
+inp('zoom').onchange = scheduleRegen;
+let picking = false;
+$('pickAo').onclick = () => {
+  picking = true;
+  settingsDlg.close();
+  active.el.classList.add('picking');
+  $('genStatus').textContent = 'Click on the active view to set the AO center…';
+};
+function endPicking() {
+  picking = false;
+  panels.forEach((p) => p?.el.classList.remove('picking'));
+  settingsDlg.showModal();
+}
+function updateAoInfo() {
+  const z = Number(inp('zoom').value);
+  const c = customCenter ?? AO_PRESETS.find((a) => a.id === sel('ao').value)?.center ?? AO_PRESETS[0].center;
+  const ext = extentKm(c[1], z, REF_W, 720);
+  $('aoInfo').textContent = `Center ${toMgrs(c[0], c[1], 4)} · frame ≈ ${ext.width.toFixed(0)} × ${ext.height.toFixed(0)} km · ${z + 0.6 < 11.5 ? 'division fight (brigades)' : z + 0.6 < 13.7 ? 'brigade fight (battalions)' : 'battalion fight (companies)'}`;
+}
+['template', 'blue', 'red', 'air', 'movement', 'riverine', 'seed', 'axis', 'p-counterattack', ...PARAM_KEYS.map((k) => 'p-' + k)].forEach((id) => $(id).addEventListener('change', scheduleRegen));
+$('dice').onclick = () => {
+  inp('seed').value = String(Math.floor(Math.random() * 99999));
+  scheduleRegen();
+};
+$('generate').onclick = () => doGenerate();
+inp('multiAO').onchange = async () => {
+  multiAO = inp('multiAO').checked;
+  if (multiAO) {
+    await setLayout(4);
+    for (const p of panels) if (p && !p.settings) p.settings = collectScenarioSettings();
+    updateMissionTitle();
+  } else {
+    const sc = active.scenario;
+    if (sc) loadScenario(sc, false);
+  }
+};
+
+// ================= camera & video tab =================
+function updateCamDesc() {
+  const info = CAMERA_PATHS.find((c) => c.id === sel('camPath').value);
+  sel('camPath').title = info?.description ?? '';
+  $('camDesc').textContent = info?.description ?? '';
+}
+sel('camPath').onchange = () => {
+  active.setCamPath(sel('camPath').value as CameraPath);
+  active.cameraBase = clipBase(active);
+  updateCamDesc();
+  const cam = directed(active, active.scenario ? t / active.scenario.meta.durationMin : 0, t);
+  if (cam) applyCam(active, cam);
+  renderAll();
+};
+function updateKeyInfo() {
+  const sc = active?.scenario;
+  const n = sc?.camera?.length ?? 0;
+  $('keyInfo').textContent = n ? `Keyframes: ${n} (T+${Math.round(sc!.camera![0].t)} … T+${Math.round(sc!.camera![n - 1].t)}). Select "My Keyframes" to use them.` : 'Keyframes: 0. Frame the active view, scrub the time, then add a keyframe.';
+}
+$('addKey').onclick = () => {
+  const sc = active.scenario;
+  if (!sc) return;
+  sc.camera = (sc.camera ?? []).filter((k) => Math.abs(k.t - t) > 0.5);
+  sc.camera.push(refCamera(active));
+  sc.camera.sort((a, b) => a.t - b.t);
+  active.director = new CameraDirector(sc);
+  updateKeyInfo();
+};
+$('clearKeys').onclick = () => {
+  if (active.scenario) active.scenario.camera = [];
+  updateKeyInfo();
+};
+function updateVideoHint() {
+  const sc = scenarioOf();
+  if (!sc) return;
+  const secs = Math.max(1, Number(inp('vlen').value) || 30);
+  const from = Number(inp('vfrom').value) || 0;
+  const to = clipEnd();
+  const pace = ((to - from) * 60) / secs;
+  $('vHint').textContent = `${secs} s of video covers T+${Math.round(from)}–${Math.round(to)} min of the mission (${pace.toFixed(0)}× real time, ${Math.round(secs * Number(sel('fps').value))} frames). Speed it up later in your editor if needed.`;
+}
+['vlen', 'vfrom', 'vto', 'fps', 'vpace'].forEach((id) => $(id).addEventListener('input', updateVideoHint));
+const clipStart = () => Math.max(0, Number(inp('vfrom').value) || 0);
+/** end of the recorded clip: explicit To T+, otherwise From + video length × pace */
+const clipEnd = () => {
+  const dur = scenarioOf()?.meta.durationMin ?? 0;
+  const to = Number(inp('vto').value);
+  if (to) return Math.min(dur, to);
+  const secs = Math.max(1, Number(inp('vlen').value) || 30);
+  return Math.min(dur, clipStart() + (secs * Number(sel('vpace').value || 30)) / 60);
+};
+function resolution(): [number, number] {
+  const [w, h] = sel('res').value.split('x').map(Number);
+  return [w, h];
+}
+const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60) || 'mission';
+/** default file name: operation codename + mission time window + local date/time */
+function fileBase(kind: string, tFrom = t, tTo?: number) {
+  const sc = scenarioOf();
+  const op = (sc?.meta.title ?? sc?.meta.name ?? 'mission').split(' · ')[0];
+  const d = new Date();
+  const stamp = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}-${String(d.getHours()).padStart(2, '0')}${String(d.getMinutes()).padStart(2, '0')}`;
+  const tt = tTo !== undefined ? `T${Math.round(tFrom)}-${Math.round(tTo)}` : `T${Math.round(tFrom)}`;
+  return `${slug(op)}_${kind}_${tt}_${stamp}`;
+}
+async function saveFile(blob: Blob, name: string, info: string) {
+  const where = await saveOutput(blob, name, info);
+  $('recStatus').textContent = where ? `Saved → ${where}` : 'Discarded.';
+  $('topRec').textContent = where ? `✓ saved` : '';
+  setTimeout(() => ($('topRec').textContent === '✓ saved' ? ($('topRec').textContent = '') : 0), 4000);
+}
+function setRecUI(on: boolean, label = '') {
+  $<HTMLButtonElement>('btnStop').disabled = !on;
+  $('btnStop').classList.toggle('armed', on);
+  $('btnRecord').classList.toggle('recording', on);
+  $('topRec').textContent = label;
+  active.el.classList.toggle('recording', on && sel('recTarget').value === 'view');
+}
+
+// ---------- fly & capture ----------
+let flying = false;
+let lastSample = 0;
+let lastBearing = 0;
+function sampleFlight(ts: number) {
+  const sc = active.scenario;
+  if (!sc || ts - lastSample < 250) return;
+  lastSample = ts;
+  const c = refCamera(active);
+  let b = c.bearing ?? 0;
+  while (b - lastBearing > 180) b -= 360;
+  while (b - lastBearing < -180) b += 360;
+  lastBearing = b;
+  c.bearing = b;
+  (sc.camera ??= []).push(c);
+}
+$('flyCapture').onclick = () => {
+  const sc = active.scenario;
+  if (!sc) return;
+  if (flying) return finishClip();
+  flying = true;
+  sc.camera = [];
+  lastBearing = active.view.map.getBearing();
+  active.camPath = 'static';
+  active.syncControls();
+  syncActiveControls();
+  t = clipStart();
+  $('flyCapture').textContent = '■ Stop capturing';
+  $('flyCapture').classList.add('active-rec');
+  settingsDlg.close();
+  setRecUI(true, 'CAPTURING CAMERA…');
+  setPlaying(true);
+};
+
+// ---------- live / screen recording ----------
+let live: LiveRecording | null = null;
+let screenRec: { rec: MediaRecorder; chunks: Blob[]; stream: MediaStream; mime: string; label: string } | null = null;
+let livePrevPr = 1;
+async function startLive() {
+  const sc = active.scenario;
+  if (!sc) return;
+  const [W, H] = resolution();
+  const fps = Number(sel('fps').value);
+  livePrevPr = active.view.pixelRatio;
+  await active.view.setPixelRatio(W / active.captureRect().w);
+  active.view.map.resize();
+  t = clipStart();
+  const p = active;
+  live = await startLiveRecording({
+    width: W,
+    height: H,
+    fps,
+    bitrate: W >= 3840 ? 40e6 : W >= 2560 ? 20e6 : 12e6,
+    draw: (out) => {
+      const st = p.stateAt(t, viewOpts());
+      if (st) p.compose(out, st, hudOpts());
+    },
+  });
+  settingsDlg.close();
+  setRecUI(true, 'LIVE ● steer the camera');
+  setPlaying(true);
+}
+async function startScreenCapture(target: HTMLElement) {
+  const fps = Number(sel('fps').value);
+  const stream = await (navigator.mediaDevices as any).getDisplayMedia({ video: { frameRate: fps }, audio: false, preferCurrentTab: true, selfBrowserSurface: 'include' });
+  const [track] = stream.getVideoTracks();
+  try {
+    if ((window as any).CropTarget && (track as any).cropTo) await (track as any).cropTo(await (window as any).CropTarget.fromElement(target));
+  } catch (e) {
+    console.warn('[scc] region capture unavailable', e);
+  }
+  const mime = MediaRecorder.isTypeSupported('video/mp4;codecs=avc1') ? 'video/mp4;codecs=avc1' : MediaRecorder.isTypeSupported('video/webm;codecs=vp9') ? 'video/webm;codecs=vp9' : 'video/webm';
+  const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 16e6 });
+  const chunks: Blob[] = [];
+  rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+  rec.start(1000);
+  screenRec = { rec, chunks, stream, mime, label: target.id === 'app' ? 'window' : 'workspace' };
+  track.addEventListener('ended', () => screenRec && finishClip());
+  t = clipStart();
+  settingsDlg.close();
+  setRecUI(true, 'SCREEN ● recording');
+  setPlaying(true);
+}
+async function finishClip() {
+  if (flying) {
+    flying = false;
+    setPlaying(false);
+    setRecUI(false);
+    $('flyCapture').textContent = '✈ Fly & capture camera path (real time)';
+    $('flyCapture').classList.remove('active-rec');
+    if (active.scenario?.camera?.length) {
+      active.director = new CameraDirector(active.scenario);
+      active.setCamPath('keyframes');
+      syncActiveControls();
+      sel('recMode').value = 'offline';
+      $('keyInfo').textContent += ' Captured flight selected. Press ● Record (frame-perfect) to render it.';
+    }
+  }
+  if (live) {
+    const rec = live;
+    live = null;
+    setPlaying(false);
+    setRecUI(false);
+    const r = await rec.stop();
+    await active.view.setPixelRatio(livePrevPr);
+    active.view.map.resize();
+    renderAll();
+    await saveFile(r.blob, `${fileBase('live', clipStart(), t)}.${r.ext}`, 'Live recording – map view');
+  }
+  if (screenRec) {
+    const s = screenRec;
+    screenRec = null;
+    setPlaying(false);
+    setRecUI(false);
+    await new Promise<void>((res) => {
+      s.rec.onstop = () => res();
+      s.rec.stop();
+    });
+    s.stream.getTracks().forEach((x) => x.stop());
+    const blob = new Blob(s.chunks, { type: s.mime.split(';')[0] });
+    await saveFile(blob, `${fileBase(s.label, clipStart(), t)}.${s.mime.includes('mp4') ? 'mp4' : 'webm'}`, s.label === 'window' ? 'Entire Pegasus C2 Studio window' : 'All map views');
+  }
+}
+
+// ---------- frame-perfect (offline) ----------
+async function withCaptureResolution<T>(p: Panel, W: number, fn: () => Promise<T>): Promise<T> {
+  const prevPr = p.view.pixelRatio;
+  await p.view.setPixelRatio(W / p.captureRect().w);
+  p.view.map.resize();
+  try {
+    return await fn();
+  } finally {
+    await p.view.setPixelRatio(prevPr);
+    p.view.map.resize();
+    renderAll();
+  }
+}
+async function composeFrame(p: Panel, tt: number, out: HTMLCanvasElement, cam?: CameraKey | null) {
+  const st = p.stateAt(tt, viewOpts());
+  if (!st) throw new Error('No mission loaded');
+  await p.view.renderFrame(st, cam ? { ...cam, zoom: cam.zoom + zoomAdj(p) } : undefined);
+  p.compose(out, st, hudOpts());
+}
+async function screenshot(): Promise<Blob> {
+  const [W, H] = resolution();
+  const out = document.createElement('canvas');
+  out.width = W;
+  out.height = H;
+  await withCaptureResolution(active, W, () => composeFrame(active, t, out));
+  return await new Promise<Blob>((r) => out.toBlob((b) => r(b!), 'image/png'));
+}
+$('shot').onclick = async () => {
+  if (!active.scenario) return;
+  await saveFile(await screenshot(), `${fileBase('screenshot')}.png`, 'Screenshot – map view');
+};
+const recSignal = { cancelled: false };
+let recording = false;
+async function recordOffline() {
+  const p = active;
+  const sc = p.scenario!;
+  const [W, H] = resolution();
+  const fps = Number(sel('fps').value);
+  const seconds = Math.max(1, Number(inp('vlen').value) || 30);
+  const from = clipStart();
+  const to = clipEnd();
+  const frames = Math.round(seconds * fps);
+  setPlaying(false);
+  p.cameraBase = clipBase(p);
+  recSignal.cancelled = false;
+  const t0 = performance.now();
+  return withCaptureResolution(p, W, () =>
+    recordVideo({
+      width: W,
+      height: H,
+      fps,
+      frames,
+      bitrate: W >= 3840 ? 40e6 : W >= 2560 ? 20e6 : 12e6,
+      signal: recSignal,
+      renderFrame: async (i, out) => {
+        const prog = i / Math.max(1, frames - 1);
+        t = from + (to - from) * prog;
+        await composeFrame(p, t, out, directed(p, prog, t));
+        updateTimeLabel();
+      },
+      onProgress: (d, n) => {
+        $('recBar').style.width = `${(100 * d) / n}%`;
+        const el = (performance.now() - t0) / 1000;
+        const msg = `Frame ${d}/${n} · ETA ${Math.round(((n - d) * el) / d)} s`;
+        $('recStatus').textContent = msg;
+        $('topRec').textContent = '● ' + msg;
+      },
+    }),
+  ).then((r) => ({ ...r, name: sc.meta.name }));
+}
+$('record').onclick = async () => {
+  if (live || screenRec) return finishClip();
+  if (recording) {
+    recSignal.cancelled = true;
+    return;
+  }
+  if (!active.scenario) {
+    $('recStatus').textContent = 'Load a mission first.';
+    return;
+  }
+  const target = sel('recTarget').value;
+  try {
+    if (target === 'workspace') return await startScreenCapture($('workspace'));
+    if (target === 'screen') return await startScreenCapture($('app'));
+    if (sel('recMode').value === 'live') return await startLive();
+    recording = true;
+    setRecUI(true, '● rendering…');
+    $('record').textContent = '■ Stop';
+    const from = clipStart();
+    const r = await recordOffline();
+    const stopped = recSignal.cancelled;
+    recording = false;
+    setRecUI(false);
+    $('record').textContent = '● Record video';
+    await saveFile(r.blob, `${fileBase('map', from, t)}.${r.ext}`, stopped ? 'Stopped early – partial video' : 'Frame-perfect map view');
+  } catch (e) {
+    console.error(e);
+    $('recStatus').textContent = 'Recording failed: ' + (e as Error).message;
+  } finally {
+    if (recording) {
+      recording = false;
+      setRecUI(false);
+      $('record').textContent = '● Record video';
+    }
+  }
+};
+
+// ================= packages: save / library / import =================
+function buildPackage(name: string, description: string, includeBattle: boolean): ScenarioPackage {
+  return {
+    format: 'scc-package',
+    version: 1,
+    name,
+    description,
+    created: new Date().toISOString(),
+    settings: collectSettings(),
+    workspace: {
+      layout,
+      multiAO,
+      active: active.idx,
+      panels: panels.filter(Boolean).map((p) => p.config()),
+      panelSettings: multiAO ? panels.map((p) => p?.settings ?? null) : undefined,
+    },
+    scenario: includeBattle && !multiAO ? active.scenario : null,
+    panelScenarios: includeBattle && multiAO ? panels.map((p) => p?.scenario ?? null) : undefined,
+  };
+}
+
+async function applyPackage(pkg: ScenarioPackage) {
+  setPlaying(false);
+  libraryDlg.close();
+  $('genStatus').textContent = `Loading "${pkg.name}"…`;
+  $('topRec').textContent = `Loading ${pkg.name}…`;
+  applySettings(pkg.settings, true);
+  multiAO = !!pkg.workspace?.multiAO;
+  inp('multiAO').checked = multiAO;
+  const ws = pkg.workspace;
+  const n = ws?.layout === 4 || multiAO ? 4 : 1;
+  await ensurePanels(n, ws?.panels);
+  for (let i = 0; i < (ws?.panels?.length ?? 0); i++) if (panels[i]) await panels[i].applyConfig(ws.panels[i]);
+  await setLayout(ws?.layout ?? 1);
+  setActive(panels[Math.min(ws?.active ?? 0, panels.length - 1)] ?? panels[0]);
+  if (multiAO) {
+    for (let i = 0; i < 4; i++) {
+      const s = { ...pkg.settings, ...(ws.panelSettings?.[i] ?? {}) };
+      panels[i].settings = s;
+      const sc = pkg.panelScenarios?.[i];
+      if (sc) attachScenario(panels[i], sc, true);
+      else await generateFor(panels[i], s);
+    }
+    updateMissionTitle();
+    applySettings(panels[active.idx].settings!, false);
+  } else if (pkg.scenario) {
+    loadScenario(pkg.scenario, true);
+    updateMissionTitle();
+  } else {
+    await generateFor(null, collectScenarioSettings());
+    updateMissionTitle();
+  }
+  for (const p of panels) if (p) p.cameraBase = clipBase(p);
+  applyDisplayToggles();
+  t = 0;
+  updateTimeMax();
+  renderAll();
+  renderWidgets(true);
+  syncActiveControls();
+  $('topRec').textContent = '';
+}
+
+async function openLibrary() {
+  settingsDlg.close();
+  const card = (name: string, desc: string, tags: string[], btns: string) =>
+    `<div class="card"><div class="cn">${esc(name)}</div><div class="cd">${esc(desc)}</div><div class="ctags">${tags.map((x) => `<span>${esc(x)}</span>`).join('')}</div><div class="cbtn">${btns}</div></div>`;
+  const tagsOf = (p: ScenarioPackage) => {
+    const s = p.settings;
+    const cam = CAMERA_PATHS.find((c) => c.id === p.workspace?.panels?.[p.workspace.active ?? 0]?.camPath)?.name;
+    return [
+      AO_PRESETS.find((a) => a.id === s.ao)?.name.split(',')[0] ?? 'Custom AO',
+      TEMPLATES.find((x) => x.id === s.template)?.name.split(' (')[0] ?? '',
+      p.workspace?.multiAO ? '4 AOs' : p.workspace?.layout === 4 ? '4 views' : '1 view',
+      cam ? '🎥 ' + cam : '',
+      `${s.vlen ?? 30}s ${s.res ?? ''}`,
+    ].filter(Boolean);
+  };
+  $('libBuiltin').innerHTML = BUILTIN_PACKAGES.map((p, i) => card(p.name, p.description, tagsOf(p), `<button data-b="${i}" class="primary">Load</button>`)).join('');
+  $('libBuiltin').querySelectorAll<HTMLButtonElement>('button[data-b]').forEach((b) => (b.onclick = () => applyPackage(structuredClone(BUILTIN_PACKAGES[Number(b.dataset.b)]))));
+  $('libSaved').innerHTML = '<div class="empty">Loading…</div>';
+  libraryDlg.showModal();
+  const saved = await listSaved();
+  $('libSaved').innerHTML = saved.length
+    ? saved.map((e) => card(e.name, e.description || '(no description)', [e.created ? new Date(e.created).toLocaleString() : e.file], `<button data-f="${esc(e.file)}" class="primary">Load</button><button data-d="${esc(e.file)}">Delete</button>`)).join('')
+    : '<div class="empty">No saved missions yet. Use 💾 to save one.</div>';
+  $('libSaved').querySelectorAll<HTMLButtonElement>('button[data-f]').forEach((b) => (b.onclick = async () => applyPackage(await loadSaved(b.dataset.f!))));
+  $('libSaved').querySelectorAll<HTMLButtonElement>('button[data-d]').forEach(
+    (b) =>
+      (b.onclick = async () => {
+        if (!confirm(`Delete saved mission "${b.dataset.d}"?`)) return;
+        await deleteSaved(b.dataset.d!);
+        openLibrary();
+      }),
+  );
+}
+inp('libFile').onchange = async () => {
+  const f = inp('libFile').files?.[0];
+  if (!f) return;
+  try {
+    const j = JSON.parse(await f.text());
+    if (j.format === 'scc-package') await applyPackage(j);
+    else loadScenario(j as Scenario, true);
+  } catch (e) {
+    alert('Could not load: ' + (e as Error).message);
+  }
+  inp('libFile').value = '';
+};
+
+function openSave() {
+  settingsDlg.close();
+  inp('saveName').value = scenarioOf()?.meta.title ?? scenarioOf()?.meta.name ?? 'My mission';
+  $<HTMLTextAreaElement>('saveDesc').value = '';
+  $('saveStatus').textContent = '';
+  saveDlg.showModal();
+}
+$('saveDisk').onclick = async () => {
+  const pkg = buildPackage(inp('saveName').value || 'Mission', $<HTMLTextAreaElement>('saveDesc').value, inp('saveBattle').checked);
+  try {
+    const f = await saveToDisk(pkg);
+    $('saveStatus').textContent = `Saved to scenarios/saved/${f}`;
+    updateMissionTitle();
+  } catch (e) {
+    $('saveStatus').textContent = 'Save failed: ' + (e as Error).message + ' – use Download instead.';
+  }
+};
+$('saveDownload').onclick = () => {
+  const pkg = buildPackage(inp('saveName').value || 'Mission', $<HTMLTextAreaElement>('saveDesc').value, inp('saveBattle').checked);
+  download(new Blob([JSON.stringify(pkg)], { type: 'application/json' }), `${slug(pkg.name)}.scc.json`);
+  $('saveStatus').textContent = 'Downloaded.';
+};
+inp('importFile').onchange = async () => {
+  const f = inp('importFile').files?.[0];
+  if (!f) return;
+  try {
+    if (f.name.endsWith('.scc.json')) {
+      const j = JSON.parse(await f.text());
+      if (j.format === 'scc-package') await applyPackage(j);
+    } else {
+      const sc = await importFile(f);
+      loadScenario(sc, true);
+      $('genStatus').textContent = `Imported ${f.name}: ${sc.units.length} units, ${sc.graphics.length} graphics.`;
+    }
+  } catch (e) {
+    $('genStatus').textContent = 'Import failed: ' + (e as Error).message;
+  }
+  inp('importFile').value = '';
+};
+
+// ================= automation API (headless tests / CLI) =================
+(window as any).scc = {
+  ready: false,
+  panels,
+  get active() {
+    return active;
+  },
+  get t() {
+    return t;
+  },
+  async generate(o: Partial<Settings> = {}) {
+    applySettings({ ...collectSettings(), ...o } as Settings, false);
+    await generateFor(multiAO ? active : null, collectScenarioSettings());
+    return active.scenario;
+  },
+  applyPackage,
+  builtins: BUILTIN_PACKAGES,
+  setLayout,
+  setTime(x: number) {
+    t = x;
+    renderAll();
+    renderWidgets(true);
+  },
+  showWidget,
+};
+(window as any).sccState = () => active?.stateAt(t, viewOpts());
+
+// ================= boot =================
+async function bootCop() {
+  await ensurePanels(1);
+  active = panels[0];
+  active.el.classList.add('active');
+  await setLayout(1);
+  setupDock();
+  inp('zoom').value = '11.7';
+  $('zoomVal').textContent = '11.7';
+  sel('axis').value = String(AO_PRESETS[0].axis);
+  tplDesc();
+  updateAoInfo();
+  syncActiveControls();
+  (window as any).scc.ready = true;
+  const pkgParam = params.get('pkg');
+  if (pkgParam && BUILTIN_PACKAGES[Number(pkgParam)]) await applyPackage(structuredClone(BUILTIN_PACKAGES[Number(pkgParam)]));
+  else if (!headless && params.get('autogen') !== '0') await applyPackage(structuredClone(BUILTIN_PACKAGES[0]));
+  // the user's default workspace layout wins over the mission's view layout at start-up
+  const def = await applyDefaultLayout(layoutHost);
+  if (def) $('genStatus').textContent += ` · layout "${def}"`;
+}
+
+initHome({ startCop: bootCop });

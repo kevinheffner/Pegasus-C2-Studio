@@ -1,0 +1,317 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Pegasus C2 Studio</title>
+  </head>
+  <body>
+    <div id="app">
+      <!-- ================= top bar ================= -->
+      <header id="topbar">
+        <div class="sys"><span class="sysmark">◆</span><span class="sysname">PEGASUS C2 STUDIO</span></div>
+        <div class="tbcenter"><span class="tblabel">MISSION</span> <span id="scnName">—</span></div>
+        <div class="tbstatus"><span class="net"><i></i>NET</span><span class="net"><i></i>DDS</span><span id="topDtg" class="mono"></span></div>
+        <div class="tbactions">
+          <button id="btnLibrary" class="ico" title="Mission library: load a saved mission with its video settings">📂</button>
+          <button id="btnSave" class="ico" title="Save mission (settings, video settings and replay)">💾</button>
+          <span class="sep"></span>
+          <button id="btnLayout1" class="ico" title="Single view">▢</button>
+          <button id="btnLayout4" class="ico" title="Four views (2×2)">⊞</button>
+          <button id="btnLayouts" class="ico" title="Workspace layouts: save the widget arrangement as default or under a name">▤</button>
+          <span class="sep"></span>
+          <button id="btnShot" class="ico" title="Screenshot of the active view (PNG)">📷</button>
+          <select id="recTargetTop" class="recTop" title="What the video recording shows"><option value="view">Map view only</option><option value="workspace">All map views</option><option value="screen">Entire Pegasus C2 Studio window</option></select>
+          <button id="btnRecord" class="ico rec" title="Record video (configure in ⚙ → Camera &amp; video)">●</button>
+          <button id="btnStop" class="ico stop" title="Stop recording" disabled>■</button>
+          <span id="topRec" class="topRec"></span>
+          <span class="sep"></span>
+          <button id="btnSettings" class="ico" title="Settings">⚙</button>
+        </div>
+      </header>
+
+      <div id="body">
+        <!-- ================= widget rail ================= -->
+        <nav id="rail" title="Click to add/remove a widget, or drag it into the dock">
+          <button data-w="map" title="Map tools">🗺<span>MAP</span></button>
+          <button data-w="layers" title="Overlays and layers">≣<span>LAYERS</span></button>
+          <button data-w="intel" title="Intelligence reports">⚑<span>INTEL</span></button>
+          <button data-w="orbat" title="Order of battle / task organization">⛬<span>ORBAT</span></button>
+          <button data-w="fires" title="Fire missions">✹<span>FIRES</span></button>
+          <button data-w="chat" title="Staff chat">✉<span>CHAT</span></button>
+        </nav>
+        <aside id="widget">
+          <div class="wHead"><span>WIDGETS</span><span class="wHint">drag from the rail ⇢ stack here</span><button id="wClose" title="Hide the dock (click a rail icon to show it again)">«</button></div>
+          <div id="dockScroll"><div id="dock"></div><div id="dockEmpty">Drag widgets here from the rail on the left (or click an icon).</div></div>
+          <div id="dockResize" title="Drag to change the dock width"></div>
+          <div id="paneStore" class="wBody" hidden>
+            <!-- MAP -->
+            <div class="wpane" data-w="map">
+              <div class="wsec">ACTIVE VIEW <span id="wActive" class="val"></span></div>
+              <div class="row">
+                <button id="wZoomOut" class="ghost small2">−</button>
+                <input id="wZoom" type="range" min="8" max="16" step="0.1" class="grow" />
+                <button id="wZoomIn" class="ghost small2">+</button>
+              </div>
+              <div class="row">
+                <button id="wHome" class="ghost small2" title="Back to the AO">⌂ AO</button>
+                <button id="wNorth" class="ghost small2" title="North up, overhead">N ↑</button>
+                <span class="seg grow" id="wMode"><button data-m="2d">2D</button><button data-m="3d">3D</button></span>
+              </div>
+              <div class="wsec">CAMERA</div>
+              <div id="camPad">
+                <button data-act="rotL" title="Rotate left">⟲</button><button data-act="tiltUp" title="Tilt up (more overhead)">▲</button><button data-act="rotR" title="Rotate right">⟳</button>
+                <button data-act="zoomOut" title="Zoom out">−</button><button data-act="tiltDown" title="Tilt down (towards horizon)">▼</button><button data-act="zoomIn" title="Zoom in">+</button>
+              </div>
+              <label class="check"><input id="linkViews" type="checkbox" /> Link views (same AO): pan/zoom together</label>
+              <div class="wsec">CURSOR</div>
+              <div id="cursorPos" class="mono readout">—</div>
+              <div class="wsec">JUMP TO AO</div>
+              <select id="wAo"></select>
+              <div class="hint">Mouse: drag = pan · right-drag / Ctrl+drag = rotate &amp; tilt · wheel = zoom. Touching the camera while a sequence plays switches that view to manual.</div>
+            </div>
+            <!-- LAYERS -->
+            <div class="wpane" data-w="layers">
+              <div class="wsec">OVERLAYS</div>
+              <div class="layers">
+                <label class="check"><input id="L-friend" type="checkbox" checked /> Friendly units</label>
+                <label class="check"><input id="L-hostile" type="checkbox" checked /> Enemy units</label>
+                <label class="check"><input id="L-air" type="checkbox" checked /> Air &amp; boats</label>
+                <label class="check"><input id="L-graphics" type="checkbox" checked /> Control measures</label>
+                <label class="check"><input id="L-labels" type="checkbox" checked /> Graphic labels</label>
+                <label class="check"><input id="L-fires" type="checkbox" checked /> Fires &amp; effects</label>
+                <label class="check"><input id="L-hud" type="checkbox" checked /> HUD chrome</label>
+                <label class="check"><input id="strength" type="checkbox" /> Strength %</label>
+              </div>
+              <label>Track history
+                <select id="trails"><option value="0">Off</option><option value="15">15 min</option><option value="30" selected>30 min</option><option value="60">60 min</option></select>
+              </label>
+              <div class="hint">Map style, 2D/3D, camera sequence and COP (fog of war) are set per view in each view's header bar.</div>
+            </div>
+            <!-- INTEL -->
+            <div class="wpane" data-w="intel">
+              <div class="chips" id="intelFilter">
+                <button data-k="all" class="on">ALL</button><button data-k="SPOTREP">SPOT</button><button data-k="CONTACT">CONTACT</button><button data-k="BDA">BDA</button><button data-k="SITREP">SITREP</button>
+              </div>
+              <div id="intelList" class="rlist"></div>
+            </div>
+            <!-- ORBAT -->
+            <div class="wpane" data-w="orbat">
+              <div id="orbatList" class="rlist"></div>
+            </div>
+            <!-- FIRES -->
+            <div class="wpane" data-w="fires">
+              <div class="wsec">FIRE MISSIONS <span id="firesActive" class="val"></span></div>
+              <div id="firesList" class="rlist"></div>
+            </div>
+            <!-- CHAT -->
+            <div class="wpane" data-w="chat">
+              <div class="wsec">CHANNEL <span class="val">#bde-ops</span></div>
+              <div id="chatList" class="rlist chat"></div>
+              <div class="row"><input id="chatInput" type="text" placeholder="Message #bde-ops" class="grow" /><button id="chatSend" class="ghost small2">Send</button></div>
+            </div>
+          </div>
+        </aside>
+
+        <!-- ================= workspace ================= -->
+        <main id="workspace"><div id="views" class="layout-1"></div></main>
+      </div>
+
+      <!-- ================= timeline ================= -->
+      <footer id="timeline">
+        <button id="play" title="Play / pause">▶</button>
+        <input id="time" type="range" min="0" max="240" step="0.1" value="0" />
+        <span id="timeLabel" class="mono"></span>
+        <label>Speed
+          <select id="speed" title="Playback speed relative to real time"><option value="0.016666666666666666">1× (real time)</option><option value="0.08333333333333333">5×</option><option value="0.16666666666666666">10×</option><option value="0.3333333333333333">20×</option><option value="0.5" selected>30×</option><option value="1">60×</option><option value="2">120×</option><option value="3">180×</option><option value="6">360×</option><option value="12">720×</option><option value="30">1800×</option></select>
+        </label>
+      </footer>
+    </div>
+
+    <!-- ================= settings modal ================= -->
+    <dialog id="settingsDlg" class="dlg">
+      <div class="dlgHead">
+        <span>⚙ SETTINGS</span>
+        <div class="tabs" id="setTabs">
+          <button data-tab="scenario" class="on">Mission</button><button data-tab="battle">Engagement model</button><button data-tab="video">Camera &amp; video</button><button data-tab="display">Display</button><button data-tab="io">Import / export</button>
+        </div>
+        <button class="dlgClose" data-close>✕</button>
+      </div>
+      <div class="dlgBody">
+        <div class="tab" data-tab="scenario">
+          <div class="cols">
+            <section>
+              <h2>Area of operations</h2>
+              <label>Preset AO <select id="ao"></select></label>
+              <button id="pickAo" class="ghost">Click on the active view to set the AO center</button>
+              <label>Zoom (reference, 1280 px frame) <span id="zoomVal" class="val"></span>
+                <input id="zoom" type="range" min="9" max="15.5" step="0.1" /></label>
+              <div class="hint" id="aoInfo"></div>
+              <label>Blue axis of attack
+                <select id="axis">
+                  <option value="0">North</option><option value="45">North-east</option><option value="90">East</option><option value="135">South-east</option>
+                  <option value="180">South</option><option value="225">South-west</option><option value="270">West</option><option value="315">North-west</option>
+                </select>
+              </label>
+              <label class="check"><input id="multiAO" type="checkbox" /> Each view shows its own AO / mission (4-view layout)</label>
+              <div class="hint">With this on, these settings apply to the active view only. Click a view to edit its mission.</div>
+            </section>
+            <section>
+              <h2>Mission</h2>
+              <label>Template <select id="template"></select></label>
+              <div class="hint" id="tplDesc"></div>
+              <label>Blue force <select id="blue"></select></label>
+              <label>Red force <select id="red"></select></label>
+              <label>Air activity <select id="air"></select></label>
+              <label>Ground movement
+                <select id="movement"><option value="roads">Follow roads (OSM)</option><option value="cross-country">Cross-country</option></select>
+              </label>
+              <label class="check"><input id="riverine" type="checkbox" /> Riverine patrol boats (follow rivers)</label>
+              <div class="row">
+                <label class="grow">Seed <input id="seed" type="number" value="7" /></label>
+                <button id="dice" class="ghost small" title="Random seed">🎲</button>
+              </div>
+              <label class="check"><input id="autoRegen" type="checkbox" checked /> Auto-regenerate when settings change</label>
+              <button id="generate" class="primary">Generate mission</button>
+              <div class="status" id="genStatus"></div>
+            </section>
+          </div>
+        </div>
+        <div class="tab" data-tab="battle">
+          <section>
+            <h2>Engagement model</h2>
+            <label>Blue combat power × <span class="val" id="v-blueQuality"></span>
+              <input id="p-blueQuality" type="range" min="0.5" max="2" step="0.05" value="1" /></label>
+            <label>Lethality × <span class="val" id="v-lethality"></span>
+              <input id="p-lethality" type="range" min="0.4" max="2.5" step="0.05" value="1" /></label>
+            <label>Defender advantage (prepared positions) <span class="val" id="v-defenderAdvantage"></span>
+              <input id="p-defenderAdvantage" type="range" min="1" max="5" step="0.1" value="2.5" /></label>
+            <label>Tempo (movement speed) × <span class="val" id="v-tempo"></span>
+              <input id="p-tempo" type="range" min="0.5" max="2" step="0.05" value="1" /></label>
+            <label>Artillery preparation before H-hour (min) <span class="val" id="v-prepMinutes"></span>
+              <input id="p-prepMinutes" type="range" min="0" max="45" step="5" value="20" /></label>
+            <label>Mission length (min, 0 = default) <span class="val" id="v-durationMin"></span>
+              <input id="p-durationMin" type="range" min="0" max="480" step="30" value="0" /></label>
+            <label class="check"><input id="p-counterattack" type="checkbox" checked /> Defender reserve counterattacks penetrations</label>
+            <div class="hint">Same seed + same parameters = same battle.</div>
+          </section>
+        </div>
+        <div class="tab" data-tab="video">
+          <div class="cols">
+            <section>
+              <h2>Camera (active view)</h2>
+              <label>Camera sequence <select id="camPath"></select></label>
+              <div class="hint camDesc" id="camDesc"></div>
+              <div class="row">
+                <button id="addKey" class="ghost small2">+ Keyframe at current time</button>
+                <button id="clearKeys" class="ghost small2">Clear</button>
+              </div>
+              <button id="flyCapture" class="ghost">✈ Fly &amp; capture camera path (real time)</button>
+              <div class="hint" id="keyInfo"></div>
+            </section>
+            <section>
+              <h2>Video</h2>
+              <div class="row">
+                <label class="grow">Resolution
+                  <select id="res"><option value="1280x720">1280×720</option><option value="1920x1080" selected>1920×1080</option><option value="2560x1440">2560×1440</option><option value="3840x2160">3840×2160</option></select>
+                </label>
+                <label>FPS <select id="fps"><option>24</option><option selected>30</option><option>60</option></select></label>
+              </div>
+              <div class="row">
+                <label class="grow">Length (s) <input id="vlen" type="number" value="30" min="2" max="600" /></label>
+                <label class="grow">From T+ <input id="vfrom" type="number" value="0" min="0" /></label>
+                <label class="grow">To T+ <input id="vto" type="number" value="" placeholder="auto" /></label>
+              </div>
+              <label>Video pace (mission time vs. video time) <select id="vpace" title="How fast the mission evolves in the video; slower = smaller movements per frame"><option value="1">1× (real time)</option><option value="5">5×</option><option value="10">10×</option><option value="20">20×</option><option value="30" selected>30×</option><option value="60">60×</option><option value="120">120×</option><option value="180">180×</option><option value="360">360×</option><option value="720">720×</option><option value="1800">1800×</option></select></label>
+              <div class="hint" id="vHint"></div>
+              <label>Video recording shows
+                <select id="recTarget">
+                  <option value="view">Show map view only (active view, clean)</option>
+                  <option value="workspace">Show all map views (workspace)</option>
+                  <option value="screen">Show entire Pegasus C2 Studio window</option>
+                </select>
+              </label>
+              <label>Recording mode (active view)
+                <select id="recMode">
+                  <option value="offline">Frame-perfect (offline, uses camera sequence)</option>
+                  <option value="live">Live: fly the camera while recording (real time)</option>
+                </select>
+              </label>
+              <div class="row">
+                <label class="grow">Save files to
+                  <select id="saveTo"><option value="downloads">Browser Downloads folder</option><option value="project">Project folder (out/recordings/)</option><option value="folder">A folder I choose…</option></select>
+                </label>
+                <button id="savePick" class="ghost small2" style="flex:none">📁</button>
+              </div>
+              <div class="hint" id="saveFolder"></div>
+              <div class="hint">You are asked for a file name each time a video or screenshot is saved.</div>
+              <div class="row">
+                <button id="shot" class="ghost small2">📷 Screenshot</button>
+                <button id="record" class="primary rec small2">● Record video</button>
+              </div>
+              <div class="progress"><div id="recBar"></div></div>
+              <div class="status" id="recStatus"></div>
+            </section>
+          </div>
+        </div>
+        <div class="tab" data-tab="display">
+          <section>
+            <h2>Output marking</h2>
+            <div class="row">
+              <label>Marking
+                <select id="markStyle"><option value="none" selected>None</option><option value="corner">Small corner tag</option><option value="banner">Banner</option></select>
+              </label>
+              <label class="grow">Text <input id="banner" type="text" value="EXERCISE" /></label>
+            </div>
+            <div class="hint">Basemap attribution required by the free tile licences is always drawn small in the corner.</div>
+          </section>
+        </div>
+        <div class="tab" data-tab="io">
+          <div class="cols">
+            <section>
+              <h2>Missions</h2>
+              <div class="hint">A saved mission stores the mission settings, engagement model, display options, default video settings, the workspace layout and the full replay.</div>
+              <button id="ioSave" class="primary">💾 Save mission…</button>
+              <button id="ioLibrary" class="ghost">📂 Open mission library…</button>
+            </section>
+            <section>
+              <h2>Import overlays</h2>
+              <label class="file">MilX (.milxly/.milxlyz), NVG (.nvg) or mission file (.scc.json)
+                <input id="importFile" type="file" accept=".milxly,.milxlyz,.nvg,.xml,.json,.zip" />
+              </label>
+            </section>
+          </div>
+        </div>
+      </div>
+    </dialog>
+
+    <!-- ================= library modal ================= -->
+    <dialog id="libraryDlg" class="dlg">
+      <div class="dlgHead"><span>📂 MISSION LIBRARY</span><span class="grow"></span><button class="dlgClose" data-close>✕</button></div>
+      <div class="dlgBody">
+        <h2>Missions</h2>
+        <div id="libBuiltin" class="cards"></div>
+        <h2>Saved missions</h2>
+        <div id="libSaved" class="cards"></div>
+        <label class="file">Load a mission file (.scc.json) <input id="libFile" type="file" accept=".json" /></label>
+      </div>
+    </dialog>
+
+    <!-- ================= save modal ================= -->
+    <dialog id="saveDlg" class="dlg small">
+      <div class="dlgHead"><span>💾 SAVE MISSION</span><span class="grow"></span><button class="dlgClose" data-close>✕</button></div>
+      <div class="dlgBody">
+        <label>Name <input id="saveName" type="text" /></label>
+        <label>Description <textarea id="saveDesc" rows="3"></textarea></label>
+        <label class="check"><input id="saveBattle" type="checkbox" checked /> Include the full replay (exact playback; larger file)</label>
+        <div class="row">
+          <button id="saveDisk" class="primary small2">Save to mission library</button>
+          <button id="saveDownload" class="ghost small2">Download file</button>
+        </div>
+        <div class="status" id="saveStatus"></div>
+      </div>
+    </dialog>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
