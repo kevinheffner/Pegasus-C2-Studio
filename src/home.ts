@@ -5,6 +5,7 @@
 let copStarted = false;
 let sensorsStarted = false;
 let vehiclesStarted = false;
+let iosStarted = false;
 
 export function initHome(o: { startCop: () => Promise<void> }) {
   const app = document.getElementById('app')!;
@@ -30,6 +31,11 @@ export function initHome(o: { startCop: () => Promise<void> }) {
           <div class="hcName">Military Sensor Simulations</div>
           <div class="hcDesc">Representative sensor displays driven by the same scenarios: EO/IR (FLIR) gimbal video, SAR imagery, GMTI radar scope, ESM / SIGINT spectrum waterfall with PDW streams, sonar waterfalls — with JSON / CSV metadata exports.</div>
         </button>
+        <button class="homeCard" data-m="ios">
+          <div class="hcIcon">🎓</div>
+          <div class="hcName">Instructor View</div>
+          <div class="hcDesc">Instructor operator station on one or two monitors: master event list with scheduled, conditional and manual injects, ground-truth tactical map with threat rings, trainee station repeaters, objectives, KPIs, session timeline, freeze / step / snapshots and journal.</div>
+        </button>
       </div>
       <div class="homeFoot">Synthetic content · all units fictional · free &amp; open-source components</div>
     </div>`;
@@ -39,13 +45,21 @@ export function initHome(o: { startCop: () => Promise<void> }) {
   const go = async (m: string) => {
     home.style.display = 'none';
     history.replaceState(null, '', `?module=${m}${location.search.includes('pkg=') ? '&' + location.search.split(/[?&]/).find((x) => x.startsWith('pkg=')) : ''}`);
-    for (const id of ['sensorApp', 'vehApp']) document.getElementById(id)?.style.setProperty('display', 'none');
+    for (const id of ['sensorApp', 'vehApp', 'iosApp']) document.getElementById(id)?.style.setProperty('display', 'none');
     if (m === 'cop') {
       app.style.display = '';
       if (!copStarted) {
         copStarted = true;
         await o.startCop();
       }
+    } else if (m === 'ios') {
+      app.style.display = 'none';
+      if (!iosStarted) {
+        iosStarted = true;
+        const mod = await import('./ios/app');
+        await mod.initIOS();
+      }
+      document.getElementById('iosApp')!.style.display = '';
     } else if (m === 'vehicles') {
       app.style.display = 'none';
       if (!vehiclesStarted) {
@@ -67,7 +81,7 @@ export function initHome(o: { startCop: () => Promise<void> }) {
   home.querySelectorAll<HTMLButtonElement>('.homeCard').forEach((b) => (b.onclick = () => go(b.dataset.m!)));
   const showHome = () => {
     app.style.display = 'none';
-    for (const id of ['sensorApp', 'vehApp']) document.getElementById(id)?.style.setProperty('display', 'none');
+    for (const id of ['sensorApp', 'vehApp', 'iosApp']) document.getElementById(id)?.style.setProperty('display', 'none');
     home.style.display = '';
     history.replaceState(null, '', location.pathname);
   };
@@ -76,5 +90,5 @@ export function initHome(o: { startCop: () => Promise<void> }) {
     if ((e.target as HTMLElement).closest('.sys')) showHome();
   });
   const m = new URLSearchParams(location.search).get('module') ?? (new URLSearchParams(location.search).has('autogen') || new URLSearchParams(location.search).has('look') ? 'cop' : null);
-  if (m === 'cop' || m === 'sensors' || m === 'vehicles') go(m);
+  if (m === 'cop' || m === 'sensors' || m === 'vehicles' || m === 'ios') go(m);
 }
