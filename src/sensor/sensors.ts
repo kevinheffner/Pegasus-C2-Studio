@@ -101,6 +101,29 @@ function waitIdle(map: maplibregl.Map, timeout = 15000) {
   });
 }
 
+/** artificial detail: unsharp mask on RGBA pixels (separable 5-tap box blur, then d + k·(d − blur)) */
+function sharpen(d: Uint8ClampedArray, w: number, h: number, k: number) {
+  if (k <= 0) return;
+  const tmp = new Float32Array(w * h * 3);
+  const blur = new Float32Array(w * h * 3);
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++)
+      for (let c = 0; c < 3; c++) {
+        let acc = 0;
+        for (let o = -2; o <= 2; o++) acc += d[(y * w + Math.min(w - 1, Math.max(0, x + o))) * 4 + c];
+        tmp[(y * w + x) * 3 + c] = acc / 5;
+      }
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++)
+      for (let c = 0; c < 3; c++) {
+        let acc = 0;
+        for (let o = -2; o <= 2; o++) acc += tmp[(Math.min(h - 1, Math.max(0, y + o)) * w + x) * 3 + c];
+        blur[(y * w + x) * 3 + c] = acc / 5;
+      }
+  for (let i = 0, j = 0; i < d.length; i += 4, j += 3)
+    for (let c = 0; c < 3; c++) d[i + c] = d[i + c] + k * (d[i + c] - blur[j + c]);
+}
+
 const zoomFor = (lat: number, mpp: number) => Math.log2((78271.51696 * Math.cos(lat * D2R)) / mpp);
 
 // =====================================================================
@@ -123,6 +146,8 @@ export const EOIR: Sensor = {
     { key: 'target', label: 'Track target', type: 'select', options: [['auto', 'Auto (where the fighting is)']], value: 'auto' },
     { key: 'night', label: 'Night', type: 'check', value: false },
     { key: 'noise', label: 'Sensor noise (NETD mK)', type: 'range', min: 0, max: 80, step: 5, value: 25 },
+    { key: 'detail', label: 'Detail enhancement (sharpen + micro texture)', type: 'range', min: 0, max: 1.5, step: 0.1, value: 0.8 },
+    { key: 'res', label: 'Render resolution', type: 'select', options: [['auto', 'Auto (view size × screen DPI)'], ['1280', '1280 px'], ['1920', '1920 px (FHD)'], ['2560', '2560 px (QHD)']], value: 'auto' },
     { key: 'atr', label: 'ATR boxes', type: 'check', value: true },
     { key: 'hud', label: 'Symbology overlay', type: 'check', value: true },
   ],
@@ -156,6 +181,8 @@ export const EOIR: Sensor = {
     og.drawImage(m.getCanvas(), 0, 0, w, h);
     const img = og.getImageData(0, 0, w, h);
     const d = img.data;
+    const detail = Number(c.p.detail ?? 0.8);
+    sharpen(d, w, h, detail * 1.2);
     const night = !!c.p.night;
     const temp = new Float32Array(w * h);
     // ground-anchored micro texture (tree crowns, field grain): unproject a coarse grid, interpolate per pixel
@@ -184,7 +211,7 @@ export const EOIR: Sensor = {
         const k00 = j0 * (GX + 1) + i0;
         const X = (gridX[k00] * (1 - fx2) + gridX[k00 + 1] * fx2) * (1 - fy2) + (gridX[k00 + GX + 1] * (1 - fx2) + gridX[k00 + GX + 2] * fx2) * fy2;
         const Y = (gridY[k00] * (1 - fx2) + gridY[k00 + 1] * fx2) * (1 - fy2) + (gridY[k00 + GX + 1] * (1 - fx2) + gridY[k00 + GX + 2] * fx2) * fy2;
-        tex[y * w + x] = vnoise(X / 3.5, Y / 3.5, 1) * 0.65 + vnoise(X / 14, Y / 14, 2) * 0.35;
+        tex[y * w + x] = vnoise(X / 3.5, Y / 3.5, 1) * 0.5 + vnoise(X / 14, Y / 14, 2) * 0.3 + (detail > 0 ? (vnoise(X / 1.2, Y / 1.2, 3) - 0.5) * 0.35 * detail + 0.1 : 0.1);
       }
     }
     for (let i = 0, k = 0; i < d.length; i += 4, k++) {
@@ -467,6 +494,8 @@ export const SAR: Sensor = {
     { key: 'looks', label: 'Looks (speckle)', type: 'range', min: 1, max: 8, step: 1, value: 2 },
     { key: 'look', label: 'Look direction', type: 'select', options: [['left', 'Left'], ['right', 'Right']], value: 'right' },
     { key: 'target', label: 'Scene center', type: 'select', options: [['auto', 'Auto (where the fighting is)']], value: 'auto' },
+    { key: 'detail', label: 'Detail enhancement (sharpen + micro texture)', type: 'range', min: 0, max: 1.5, step: 0.1, value: 0.8 },
+    { key: 'res', label: 'Render resolution', type: 'select', options: [['auto', 'Auto (view size × screen DPI)'], ['1280', '1280 px'], ['1920', '1920 px (FHD)'], ['2560', '2560 px (QHD)']], value: 'auto' },
     { key: 'gmti', label: 'GMTI movers overlay', type: 'check', value: true },
     { key: 'annot', label: 'Annotation frame', type: 'check', value: true },
   ],
@@ -491,6 +520,7 @@ export const SAR: Sensor = {
     og.drawImage(m.getCanvas(), 0, 0, w, h);
     const img = og.getImageData(0, 0, w, h);
     const d = img.data;
+    sharpen(d, w, h, Number(c.p.detail ?? 0.8) * 1.4);
     const L = Number(c.p.looks);
     const crossPol = c.p.pol === 'HV' || c.p.pol === 'VH';
     const lum = new Float32Array(w * h);
@@ -667,6 +697,7 @@ export const RADAR: Sensor = {
     { key: 'palette', label: 'Phosphor', type: 'select', options: [['phosphor', 'Green'], ['amber', 'Amber']], value: 'phosphor' },
     { key: 'clutter', label: 'Clutter', type: 'range', min: 0, max: 1, step: 0.1, value: 0.5 },
     { key: 'tracks', label: 'Track symbols & data blocks', type: 'check', value: true },
+    { key: 'res', label: 'Render resolution', type: 'select', options: [['auto', 'Auto (view size × screen DPI)'], ['1280', '1280 px'], ['1920', '1920 px (FHD)'], ['2560', '2560 px (QHD)']], value: 'auto' },
   ],
   reset() {
     ppiAccum = null;
@@ -910,6 +941,7 @@ export const ESM: Sensor = {
     { key: 'palette', label: 'Waterfall palette', type: 'select', options: [['jet', 'Jet'], ['ironbow', 'Ironbow'], ['phosphor', 'Green']], value: 'jet' },
     { key: 'floor', label: 'Noise floor (dBm)', type: 'range', min: -110, max: -70, step: 5, value: -95 },
     { key: 'df', label: 'DF bearing plot', type: 'check', value: true },
+    { key: 'res', label: 'Render resolution', type: 'select', options: [['auto', 'Auto (view size × screen DPI)'], ['1280', '1280 px'], ['1920', '1920 px (FHD)'], ['2560', '2560 px (QHD)']], value: 'auto' },
   ],
   reset() {
     wfCanvas = null;
@@ -1106,6 +1138,7 @@ export const SONAR: Sensor = {
     { key: 'palette', label: 'Palette', type: 'select', options: [['phosphor', 'Green'], ['amber', 'Amber'], ['gray', 'Gray']], value: 'phosphor' },
     { key: 'ambient', label: 'Ambient noise', type: 'range', min: 0, max: 1, step: 0.1, value: 0.5 },
     { key: 'seed', label: 'Contact seed', type: 'range', min: 1, max: 20, step: 1, value: 3 },
+    { key: 'res', label: 'Render resolution', type: 'select', options: [['auto', 'Auto (view size × screen DPI)'], ['1280', '1280 px'], ['1920', '1920 px (FHD)'], ['2560', '2560 px (QHD)']], value: 'auto' },
   ],
   reset() {
     btr = lofar = null;

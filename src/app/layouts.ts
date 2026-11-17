@@ -9,7 +9,7 @@ import type { PanelConfig } from './panel';
 
 export interface WorkspaceLayout {
   dock: DockLayout;
-  views: { layout: string | number; panels: PanelConfig[]; active: number; colFrac?: number; rowFrac?: number };
+  views: { layout: string | number; panels: PanelConfig[]; active: number; tree?: import('./tiles').LNode };
   toggles: Record<string, boolean | string>;
   saved: string;
 }

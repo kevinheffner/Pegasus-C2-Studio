@@ -11,6 +11,7 @@ import type { Simulation } from '../scenario/sim';
 export const SENSOR_CHOICES = SENSORS.map((s) => ({ id: s.id, name: s.name, icon: s.icon }));
 
 let imageryMap: maplibregl.Map | null = null;
+let imageryReady: Promise<void> | null = null;
 /** one shared off-screen imagery map for EO/IR + SAR views (rendered on demand) */
 function getImageryMap() {
   if (!imageryMap) {
@@ -18,7 +19,12 @@ function getImageryMap() {
     host.style.cssText = 'position:fixed;left:-20000px;top:0;width:960px;height:540px;';
     document.body.appendChild(host);
     imageryMap = new maplibregl.Map({ container: host, style: SAT_STYLE, center: [0, 0], zoom: 2, interactive: false, fadeDuration: 0, attributionControl: false, canvasContextAttributes: { preserveDrawingBuffer: true } } as any);
-    imageryMap.on('load', () => imageryMap!.setTerrain({ source: 'dem', exaggeration: 1.4 }));
+    imageryReady = new Promise<void>((resolve) =>
+      imageryMap!.once('load', () => {
+        imageryMap!.setTerrain({ source: 'dem', exaggeration: 1.4 });
+        resolve();
+      }),
+    );
   }
   return imageryMap;
 }
@@ -50,15 +56,29 @@ export class SensorView {
   /** should this view re-render now? (imagery sensors are throttled; scopes animate continuously) */
   due(t: number, now: number, playing: boolean) {
     if (this.busy) return false;
+    // re-render when the view was resized (e.g. a boundary was dragged)
+    const box = this.canvas.parentElement;
+    if (box && box.clientWidth > 0 && now - this.lastRender > 150) {
+      const tw = this.targetWidth(box);
+      const th = Math.round((tw * box.clientHeight) / box.clientWidth);
+      if (Math.abs(this.canvas.width - tw) > 8 || Math.abs(this.canvas.height - th) > 8) return true;
+    }
     if (this.sensor.needsMap) return Math.abs(t - this.lastT) > 0.05 && (!playing || now - this.lastRender > 250);
     return now - this.lastRender > 33;
   }
 
+  /** pixel width to render at: the view's size × screen DPI (auto) or the chosen resolution, max 2560 */
+  targetWidth(box: HTMLElement) {
+    const pref = String(this.params.res ?? 'auto');
+    if (pref === 'auto') return Math.max(160, Math.min(2560, Math.round(box.clientWidth * (window.devicePixelRatio || 1))));
+    return Math.max(160, Number(pref));
+  }
+
   /** render into the view's own canvas (sized to its box, capped for the pixel-heavy sensors) */
   async renderLive(sc: Scenario, sim: Simulation, t: number, vt: number) {
+    if (this.busy) return; // never resize (= clear) the canvas while a frame is still being drawn
     const box = this.canvas.parentElement!;
-    const cap = this.sensor.needsMap ? 960 : 1600;
-    const w = Math.max(160, Math.min(cap, Math.round(box.clientWidth)));
+    const w = this.targetWidth(box);
     const h = Math.max(90, Math.round((w * box.clientHeight) / Math.max(1, box.clientWidth)));
     if (this.canvas.width !== w || this.canvas.height !== h) {
       this.canvas.width = w;
@@ -74,7 +94,7 @@ export class SensorView {
     try {
       const map = getImageryMap();
       if (this.sensor.needsMap) {
-        if (!map.loaded()) await new Promise<void>((r) => map.once('load', () => r()));
+        await imageryReady; // style loaded once (map.loaded() is also false while tiles stream)
         // the imagery map renders at the output aspect so geometry matches
         const host = map.getContainer();
         const mw = 960, mh = Math.round((960 * out.height) / out.width);

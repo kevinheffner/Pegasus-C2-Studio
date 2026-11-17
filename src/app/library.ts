@@ -24,6 +24,8 @@ export const layoutCount = (l: unknown) => LAYOUTS.find((x) => x.id === normLayo
 
 export interface WorkspaceConfig {
   layout: LayoutId | 1 | 4;
+  /** free-form split tree (overrides the preset) */
+  tree?: import('./tiles').LNode;
   multiAO: boolean;
   active: number;
   panels: PanelConfig[];

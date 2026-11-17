@@ -16,6 +16,7 @@ import { buildReports, type ChatLine, type Report } from './app/reports';
 import { BUILTIN_PACKAGES, deleteSaved, listSaved, loadSaved, saveToDisk, LAYOUTS, normLayout, layoutCount, type LayoutId, type ScenarioPackage, type Settings } from './app/library';
 import { initHome } from './home';
 import { initDock, type Dock } from './app/dock';
+import { PRESET_TREES, cloneTree, leaves, splitLeaf, removeLeaf, renderTree, type LNode } from './app/tiles';
 import { openLayouts, applyDefaultLayout, type LayoutHost } from './app/layouts';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -46,8 +47,10 @@ for (const k of PARAM_KEYS) {
 // ================= state =================
 const panels: Panel[] = [];
 let active!: Panel;
-let layout: LayoutId = '1';
-let prevLayout: LayoutId = '4';
+let layout: LayoutId = '1'; // last preset chosen (for the icon highlight)
+let tree: LNode = cloneTree(PRESET_TREES['1']);
+let maximized = false;
+const MAX_VIEWS = 8;
 let multiAO = false;
 let t = 0;
 let playing = false;
@@ -56,7 +59,7 @@ const reportCache = new WeakMap<Scenario, { reports: Report[]; chat: ChatLine[] 
 const userChat: ChatLine[] = [];
 const viewsEl = $('views');
 
-const visiblePanels = () => (layout === '1' ? (active ? [active] : []) : panels.slice(0, layoutCount(layout)).filter(Boolean));
+const visiblePanels = (): Panel[] => (maximized ? (active ? [active] : []) : leaves(tree).map((i) => panels[i]).filter(Boolean));
 const mapPanels = () => visiblePanels().filter((p) => p.content === 'map');
 const scenarioOf = () => active?.scenario ?? null;
 const viewOpts = (): ViewOptions => ({ trailMin: Number(sel('trails').value) });
@@ -99,12 +102,11 @@ async function createPanel(i: number, cfg: PanelConfig) {
     activate: (x) => setActive(x),
     maximize: (x) => {
       setActive(x);
-      if (layout === '1') setLayout(prevLayout);
-      else {
-        prevLayout = layout;
-        setLayout('1');
-      }
+      maximized = !maximized && leaves(tree).length > 1;
+      renderLayout();
     },
+    split: (x, d) => splitView(x, d),
+    close: (x) => closeView(x),
     changed: (x, what) => {
       if (what === 'cam') x.cameraBase = clipBase(x);
       if (x === active) syncActiveControls();
@@ -168,12 +170,13 @@ function linkFrom(src: Panel) {
 }
 
 async function ensurePanels(n: number, cfgs?: PanelConfig[]) {
-  const defaults: PanelConfig[] = [
+  const base: PanelConfig[] = [
     { look: 'topo', mode: '2d', camPath: 'static', fog: false, title: 'VIEW 1 · MAP' },
     { look: 'vector-topo', mode: '3d', camPath: 'overwatch', fog: false, title: 'VIEW 2 · 3D' },
     { look: 'c2-dark', mode: '2d', camPath: 'static', fog: true, title: 'VIEW 3 · BLUE COP' },
     { look: 'c2-sat', mode: '3d', camPath: 'commander', fog: false, title: 'VIEW 4 · ISR' },
   ];
+  const defaults = Array.from({ length: MAX_VIEWS }, (_, i) => ({ ...base[i % 4], title: `VIEW ${i + 1} · ${base[i % 4].title!.split('·')[1].trim()}` }));
   for (let i = 0; i < n; i++) {
     if (!panels[i]) {
       await createPanel(i, cfgs?.[i] ?? defaults[i]);
@@ -218,91 +221,59 @@ function setActive(p: Panel) {
   renderWidgets(true);
 }
 
-async function setLayout(id: LayoutId | number) {
+/** apply a layout preset (or a saved tree) */
+async function setLayout(id: LayoutId | number, t?: LNode) {
   const n = normLayout(id);
   layout = n;
-  await ensurePanels(layoutCount(n));
-  if (n !== '1' && active && active.idx >= layoutCount(n)) setActive(panels[0]);
-  viewsEl.className = `layout-${n.replace('+', 'p')}`;
-  document.querySelectorAll<HTMLButtonElement>('#layoutBtns button').forEach((b) => b.classList.toggle('on', b.dataset.l === n));
-  applySplit();
-  requestAnimationFrame(() => {
+  tree = t ? cloneTree(t) : cloneTree(PRESET_TREES[n]);
+  maximized = false;
+  await ensurePanels(Math.max(...leaves(tree)) + 1);
+  renderLayout();
+  updateTimeMax();
+}
+const viewStore = document.createElement('div');
+viewStore.style.display = 'none';
+document.body.appendChild(viewStore);
+/** rebuild the tiled DOM from the tree (panels not in the tree are parked off-screen) */
+function renderLayout() {
+  viewsEl.className = 'tiles';
+  const shown = new Set(maximized ? [active.idx] : leaves(tree));
+  for (const p of panels) if (p && !shown.has(p.idx)) viewStore.appendChild(p.el);
+  if (!shown.has(active?.idx)) setActive(panels[leaves(tree)[0]]);
+  renderTree(viewsEl, maximized ? { t: 'leaf', p: active.idx } : tree, (i) => panels[i].el, () => {
     panels.forEach((p) => p?.fit());
     renderAll();
   });
-  updateTimeMax();
-}
-
-// ================= resizable view boundaries =================
-let colFrac = 0.5;
-let rowFrac = 0.5;
-const hasCols = () => ['2v', '1+2', '2+1', '4'].includes(layout);
-const hasRows = () => ['2h', '1+2', '2+1', '4'].includes(layout);
-function applySplit() {
-  viewsEl.style.gridTemplateColumns = hasCols() ? `${colFrac}fr ${1 - colFrac}fr` : '';
-  viewsEl.style.gridTemplateRows = hasRows() ? `${rowFrac}fr ${1 - rowFrac}fr` : '';
-  requestAnimationFrame(placeSplitters);
-}
-const vSplit = document.createElement('div');
-const hSplit = document.createElement('div');
-vSplit.className = 'vsplit';
-hSplit.className = 'hsplit';
-vSplit.title = hSplit.title = 'Drag to resize the views · double-click to reset';
-$('workspace').append(vSplit, hSplit);
-function placeSplitters() {
-  const ws = $('workspace').getBoundingClientRect();
-  const vr = viewsEl.getBoundingClientRect();
-  const vis = visiblePanels();
-  const rect = (i: number) => panels[i]?.el.getBoundingClientRect();
-  vSplit.style.display = hasCols() && vis.length > 1 ? '' : 'none';
-  hSplit.style.display = hasRows() && vis.length > 1 ? '' : 'none';
-  if (hasCols()) {
-    const a = layout === '2+1' ? rect(0) : rect(0);
-    const x = a ? a.right + 3 - ws.left : vr.left + vr.width * colFrac - ws.left;
-    Object.assign(vSplit.style, { left: `${x - 4}px`, top: `${vr.top - ws.top}px`, height: `${vr.height}px` });
-  }
-  if (hasRows()) {
-    const first = layout === '1+2' ? rect(1) : rect(0);
-    const y = first ? first.bottom + 3 - ws.top : vr.top + vr.height * rowFrac - ws.top;
-    let x0 = vr.left, x1 = vr.right;
-    const vx = vSplit.getBoundingClientRect().left + 4;
-    if (layout === '1+2') x0 = vx;
-    if (layout === '2+1') x1 = vx;
-    Object.assign(hSplit.style, { top: `${y - 4}px`, left: `${x0 - ws.left}px`, width: `${x1 - x0}px` });
-  }
-}
-function dragSplit(el: HTMLElement, axis: 'x' | 'y') {
-  el.addEventListener('pointerdown', (e) => {
-    e.preventDefault();
-    el.setPointerCapture(e.pointerId);
-    el.classList.add('dragging');
-    const move = (ev: PointerEvent) => {
-      const vr = viewsEl.getBoundingClientRect();
-      const f = axis === 'x' ? (ev.clientX - vr.left) / vr.width : (ev.clientY - vr.top) / vr.height;
-      const v = Math.max(0.15, Math.min(0.85, f));
-      if (axis === 'x') colFrac = v;
-      else rowFrac = v;
-      applySplit();
-    };
-    const up = () => {
-      el.removeEventListener('pointermove', move);
-      el.removeEventListener('pointerup', up);
-      el.classList.remove('dragging');
-      panels.forEach((p) => p?.fit());
-      renderAll();
-    };
-    el.addEventListener('pointermove', move);
-    el.addEventListener('pointerup', up);
-  });
-  el.addEventListener('dblclick', () => {
-    if (axis === 'x') colFrac = 0.5;
-    else rowFrac = 0.5;
-    applySplit();
+  document.querySelectorAll<HTMLButtonElement>('#layoutBtns button').forEach((b) => b.classList.toggle('on', !maximized && b.dataset.l === layout && JSON.stringify(PRESET_TREES[layout]) === JSON.stringify(stripF(tree))));
+  panels.forEach((p) => p?.el.classList.toggle('maximized', maximized && p === active));
+  requestAnimationFrame(() => {
+    panels.forEach((p) => p?.fit());
+    renderAll();
+    renderWidgets(true);
   });
 }
-dragSplit(vSplit, 'x');
-dragSplit(hSplit, 'y');
-new ResizeObserver(() => placeSplitters()).observe(viewsEl);
+const stripF = (n: LNode): LNode => (n.t === 'leaf' ? n : { ...n, f: 0.5, a: stripF(n.a), b: stripF(n.b) });
+/** split a view: a new view appears to the right (row) or below (col) */
+async function splitView(p: Panel, d: 'row' | 'col') {
+  const used = new Set(leaves(tree));
+  let q = -1;
+  for (let i = 0; i < MAX_VIEWS; i++) if (!used.has(i)) { q = i; break; }
+  if (q < 0) return alert(`Up to ${MAX_VIEWS} views.`);
+  await ensurePanels(q + 1);
+  maximized = false;
+  tree = splitLeaf(tree, p.idx, d, q);
+  renderLayout();
+  setActive(panels[q]);
+  if (panels[q].scenario) requestAnimationFrame(() => flyToAO(panels[q]));
+}
+function closeView(p: Panel) {
+  const t2 = removeLeaf(tree, p.idx);
+  if (!t2) return; // keep at least one view
+  if (p.content.startsWith('widget:')) p.setContent('map'); // give the widget back
+  tree = t2;
+  maximized = false;
+  renderLayout();
+}
 
 // ================= scenario attach / generate =================
 function attachScenario(p: Panel, sc: Scenario, fly: boolean) {
@@ -587,7 +558,7 @@ const TOGGLE_IDS = ['L-friend', 'L-hostile', 'L-air', 'L-graphics', 'L-labels', 
 const layoutHost: LayoutHost = {
   capture: () => ({
     dock: dock.getState(),
-    views: { layout, active: active.idx, panels: panels.filter(Boolean).map((p) => p.config()), colFrac, rowFrac },
+    views: { layout, active: active.idx, panels: panels.filter(Boolean).map((p) => p.config()), tree: cloneTree(tree) },
     toggles: Object.fromEntries(TOGGLE_IDS.map((id) => {
       const e = document.getElementById(id) as HTMLInputElement | HTMLSelectElement;
       return [id, e instanceof HTMLInputElement && e.type === 'checkbox' ? e.checked : e.value];
@@ -600,9 +571,7 @@ const layoutHost: LayoutHost = {
       for (let i = 0; i < l.views.panels.length; i++) if (panels[i]) await panels[i].applyConfig(l.views.panels[i]);
     }
     if (l.views) {
-      colFrac = (l.views as any).colFrac ?? 0.5;
-      rowFrac = (l.views as any).rowFrac ?? 0.5;
-      await setLayout(normLayout(l.views.layout));
+      await setLayout(normLayout(l.views.layout), (l.views as any).tree);
       setActive(panels[Math.min(l.views.active ?? 0, panels.length - 1)] ?? panels[0]);
     }
     for (const [id, v] of Object.entries(l.toggles ?? {})) {
@@ -1176,6 +1145,7 @@ function buildPackage(name: string, description: string, includeBattle: boolean)
     settings: collectSettings(),
     workspace: {
       layout,
+      tree: cloneTree(tree),
       multiAO,
       active: active.idx,
       panels: panels.filter(Boolean).map((p) => p.config()),
@@ -1195,10 +1165,10 @@ async function applyPackage(pkg: ScenarioPackage) {
   multiAO = !!pkg.workspace?.multiAO;
   inp('multiAO').checked = multiAO;
   const ws = pkg.workspace;
-  const n = multiAO ? 4 : Math.max(layoutCount(ws?.layout), ws?.panels?.length ?? 1);
+  const n = multiAO ? 4 : Math.max(layoutCount(ws?.layout), ws?.panels?.length ?? 1, ws?.tree ? Math.max(...leaves(ws.tree)) + 1 : 1);
   await ensurePanels(n, ws?.panels);
   for (let i = 0; i < (ws?.panels?.length ?? 0); i++) if (panels[i]) await panels[i].applyConfig(ws.panels[i]);
-  await setLayout(multiAO ? '4' : normLayout(ws?.layout));
+  await setLayout(multiAO ? '4' : normLayout(ws?.layout), multiAO ? undefined : ws?.tree);
   setActive(panels[Math.min(ws?.active ?? 0, panels.length - 1)] ?? panels[0]);
   if (multiAO) {
     for (let i = 0; i < 4; i++) {
@@ -1237,7 +1207,7 @@ async function openLibrary() {
     return [
       AO_PRESETS.find((a) => a.id === s.ao)?.name.split(',')[0] ?? 'Custom AO',
       TEMPLATES.find((x) => x.id === s.template)?.name.split(' (')[0] ?? '',
-      p.workspace?.multiAO ? '4 AOs' : layoutCount(p.workspace?.layout) > 1 ? `${layoutCount(p.workspace?.layout)} views` : '1 view',
+      p.workspace?.multiAO ? '4 AOs' : (p.workspace?.tree ? leaves(p.workspace.tree).length : layoutCount(p.workspace?.layout)) > 1 ? `${p.workspace?.tree ? leaves(p.workspace.tree).length : layoutCount(p.workspace?.layout)} views` : '1 view',
       cam ? '🎥 ' + cam : '',
       `${s.vlen ?? 30}s ${s.res ?? ''}`,
     ].filter(Boolean);

@@ -103,6 +103,7 @@ export async function initSensors() {
   const canvas = $<HTMLCanvasElement>('sCanvas');
 
   // ---------- stage sizing (16:9 internal resolution 1280×720 for preview) ----------
+  // preview renders at the stage's pixel size (× DPI, max 2560) – see fitPreview()
   const PREVIEW: [number, number] = [1280, 720];
   function fit() {
     const main = $('sMain');
@@ -110,6 +111,13 @@ export async function initSensors() {
     const w = Math.min(W, (H * 16) / 9);
     $('sStage').style.width = `${Math.floor(w)}px`;
     $('sStage').style.height = `${Math.floor((w * 9) / 16)}px`;
+    // render the preview at the real displayed resolution
+    const pref = String(params[sensor?.id ?? 'eoir']?.res ?? 'auto');
+    const pw = pref === 'auto' ? Math.min(2560, Math.round(w * (window.devicePixelRatio || 1))) : Number(pref);
+    if (pw > 0 && canvas && canvas.width !== pw) {
+      canvas.width = pw;
+      canvas.height = Math.round((pw * 9) / 16);
+    }
   }
   new ResizeObserver(fit).observe($('sMain'));
   // the imagery map is rendered at the preview resolution behind the display
@@ -189,6 +197,7 @@ export async function initSensors() {
   async function renderInto(out: HTMLCanvasElement, vt: number) {
     if (!sc || !sim) return;
     const c = ctx(out.width, out.height, vt);
+    if (sensor.needsMap && Math.abs(map.getPixelRatio() - Math.max(1, out.width / PREVIEW[0])) > 0.01) map.setPixelRatio(Math.max(1, out.width / PREVIEW[0]));
     if (sensor.needsMap && sensor.prepare) await sensor.prepare(c);
     const g = out.getContext('2d')!;
     sensor.render(c, g);

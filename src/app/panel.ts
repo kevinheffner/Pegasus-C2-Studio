@@ -66,6 +66,8 @@ export class Panel {
     private hooks: {
       activate: (p: Panel) => void;
       maximize: (p: Panel) => void;
+      split: (p: Panel, d: 'row' | 'col') => void;
+      close: (p: Panel) => void;
       changed: (p: Panel, what: 'look' | 'mode' | 'cam' | 'fog' | 'content') => void;
       /** move a widget pane in/out of this view (handled by the app so the dock stays consistent) */
       hostWidget: (p: Panel, prev: string | null, next: string | null) => void;
@@ -85,7 +87,7 @@ export class Panel {
         <span class="vseg"><button data-m="2d">2D</button><button data-m="3d">3D</button></span>
         <select class="vcam" title="Camera sequence for this view"></select>
         <button class="vfog" title="Blue COP: show the enemy only where detected (fog of war)">COP</button>
-        <button class="vmax" title="Maximize / restore this view">⤢</button>
+        <span class="vtools"><button class="vsplitR" title="Split this view: new view to the right">◫</button><button class="vsplitD" title="Split this view: new view below">⊟</button><button class="vmax" title="Maximize / restore this view">⤢</button><button class="vclose" title="Close this view">✕</button></span>
       </div>
       <div class="vbody"><div class="vstage"><div class="vmap"></div><canvas class="vhud"></canvas></div><div class="vsensor"></div><div class="vwidget"></div></div>`;
     host.appendChild(this.el);
@@ -124,6 +126,9 @@ export class Panel {
       this.hooks.changed(this, 'fog');
     };
     (this.el.querySelector('.vmax') as HTMLButtonElement).onclick = () => this.hooks.maximize(this);
+    (this.el.querySelector('.vsplitR') as HTMLButtonElement).onclick = () => this.hooks.split(this, 'row');
+    (this.el.querySelector('.vsplitD') as HTMLButtonElement).onclick = () => this.hooks.split(this, 'col');
+    (this.el.querySelector('.vclose') as HTMLButtonElement).onclick = () => this.hooks.close(this);
     this.camPath = cfg.camPath;
     this.fog = cfg.fog;
     this.mode = cfg.mode;
