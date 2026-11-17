@@ -18,6 +18,7 @@ import { SensorView } from '../app/sensorview';
 import { dtg } from '../render/hud';
 import { toMgrs } from '../geo/geo';
 import { saveOutput } from '../export/save';
+import './ios.css';
 
 type MelStatus = 'pending' | 'armed' | 'fired' | 'skipped';
 interface MelItem {
@@ -117,9 +118,9 @@ export async function initIOS() {
   root.id = 'iosApp';
   root.innerHTML = `
   <header id="iosTop">
-    <div class="sys"><span class="sysmark">◆</span><span class="sysname">INSTRUCTOR OPERATOR STATION</span><span class="syssub">PEGASUS C2 STUDIO</span></div>
-    <div class="iosEx"><span class="tblabel">EXERCISE</span> <span id="iosEx">—</span></div>
-    <div class="tbstatus"><span id="iosState" class="iosState run">RUNNING</span><span id="iosDtg" class="mono"></span><span id="iosWall" class="mono iosWall"></span></div>
+    <div class="sys"><span class="sysmark">🎓</span><span class="sysname">Pegasus Training</span><span class="syssub">Instructor Station</span></div>
+    <div class="iosEx"><span class="tblabel">Training session</span> <span id="iosEx">—</span></div>
+    <div class="tbstatus"><span id="iosState" class="iosState run">● Running</span><span id="iosDtg" class="mono"></span><span id="iosWall" class="mono iosWall"></span></div>
     <div class="tbactions">
       <label class="iosSel">Mission <select id="iosMission"></select></label>
       <label class="iosSel">Monitors <select id="iosMon"><option value="1">1</option><option value="2" selected>2</option></select></label>
@@ -131,45 +132,45 @@ export async function initIOS() {
   </header>
   <div id="iosMonitors">
     <section class="monitor" id="mon1">
-      <div class="monLabel">MONITOR 1 · EXERCISE CONTROL</div>
+      <div class="monLabel">Session control<small>Monitor 1</small></div>
       <div class="m1grid">
         <div class="pane melPane">
-          <div class="paneHead">MASTER EVENT LIST <span class="paneSub" id="melCount"></span>
-            <span class="grow"></span><span class="chips" id="melFilter"><button data-k="all" class="on">ALL</button><button data-k="pending">PENDING</button><button data-k="fired">FIRED</button></span></div>
-          <div class="melTable"><table><thead><tr><th>ID</th><th>T+</th><th>TYPE</th><th>EVENT</th><th>TARGET</th><th>TRIG</th><th>STATUS</th><th></th></tr></thead><tbody id="melBody"></tbody></table></div>
+          <div class="paneHead">Master event list <span class="paneSub" id="melCount"></span>
+            <span class="grow"></span><span class="chips" id="melFilter"><button data-k="all" class="on">All</button><button data-k="pending">Upcoming</button><button data-k="fired">Done</button></span></div>
+          <div class="melTable"><table><thead><tr><th>ID</th><th>Time</th><th>Type</th><th>Event</th><th>Audience</th><th>Trigger</th><th>Status</th><th></th></tr></thead><tbody id="melBody"></tbody></table></div>
         </div>
         <div class="pane mapPane">
-          <div class="paneHead">TACTICAL OVERVIEW · GROUND TRUTH <span class="grow"></span><label class="check small"><input type="checkbox" id="iosFog"> Trainee COP</label><label class="check small"><input type="checkbox" id="iosRings" checked> Threat rings</label></div>
+          <div class="paneHead">Exercise map <span class="paneSub">ground truth</span> <span class="grow"></span><label class="check small"><input type="checkbox" id="iosFog"> Learner view</label><label class="check small"><input type="checkbox" id="iosRings" checked> Threat rings</label></div>
           <div class="iosMapWrap"><div id="iosMap"></div><div id="iosFogLayer"></div><div id="iosEffects"></div></div>
         </div>
         <div class="pane jourPane">
-          <div class="paneHead">INSTRUCTOR JOURNAL</div>
+          <div class="paneHead">Instructor notes &amp; log</div>
           <div id="iosJournal" class="jour"></div>
           <div class="row"><input id="iosNote" type="text" placeholder="Add an instructor note…" class="grow" /><button id="iosNoteAdd" class="ghost small2" style="flex:none">Log</button></div>
         </div>
         <div class="pane ctlPane">
           <div class="ctlRow">
-            <button id="iosRun" class="ctlBtn">❚❚ FREEZE</button>
-            <button id="iosStep" class="ctlBtn" title="Advance 1 minute">⏭ STEP 1 MIN</button>
+            <button id="iosRun" class="ctlBtn">❚❚ Pause</button>
+            <button id="iosStep" class="ctlBtn" title="Advance 1 minute">⏭ Step 1 min</button>
             <label class="iosSel">Time scale <select id="iosScale"><option value="0.25">¼×</option><option value="0.5">½×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option><option value="8">8×</option></select></label>
             <input id="iosTime" type="range" min="0" max="240" step="0.1" value="0" class="grow" />
             <span id="iosT" class="mono iosT"></span>
-            <button id="iosSnap" class="ctlBtn" title="Save a snapshot of the exercise state">⎙ SNAPSHOT</button>
+            <button id="iosSnap" class="ctlBtn" title="Save a snapshot of the exercise state">⎙ Save snapshot</button>
             <select id="iosSnaps" title="Restore a snapshot"><option value="">Restore snapshot…</option></select>
           </div>
         </div>
       </div>
     </section>
     <section class="monitor" id="mon2">
-      <div class="monLabel">MONITOR 2 · TRAINING OVERVIEW</div>
+      <div class="monLabel">Learner overview<small>Monitor 2</small></div>
       <div class="m2grid">
-        <div class="pane rep" data-rep="0"><div class="paneHead">TRAINEE 1 · UAV OPERATOR <span class="paneSub">REAPER 1 · EO/IR</span></div><div class="repBody" id="rep0"></div></div>
-        <div class="pane rep" data-rep="1"><div class="paneHead">TRAINEE 2 · AIR DEFENCE <span class="paneSub">GROUND SURV RADAR</span></div><div class="repBody" id="rep1"></div></div>
-        <div class="pane rep" data-rep="2"><div class="paneHead">TRAINEE 3 · EW OPERATOR <span class="paneSub">ESM / SIGINT</span></div><div class="repBody" id="rep2"></div></div>
-        <div class="pane rep" data-rep="3"><div class="paneHead">TRAINEE 4 · BATTLE CAPTAIN <span class="paneSub">BDE COP</span></div><div class="repBody"><div id="rep3map"></div></div></div>
-        <div class="pane kpiPane"><div class="paneHead">SESSION KPIs</div><div id="iosKpi" class="kpis"></div></div>
-        <div class="pane objPane"><div class="paneHead">TRAINING OBJECTIVES</div><div id="iosObj" class="objs"></div></div>
-        <div class="pane tlPane"><div class="paneHead">SESSION TIMELINE</div><canvas id="iosTl"></canvas></div>
+        <div class="pane rep" data-rep="0"><div class="paneHead">Learner 1 · UAV operator <span class="paneSub">EO/IR feed</span></div><div class="repBody" id="rep0"></div></div>
+        <div class="pane rep" data-rep="1"><div class="paneHead">Learner 2 · Air defence <span class="paneSub">radar scope</span></div><div class="repBody" id="rep1"></div></div>
+        <div class="pane rep" data-rep="2"><div class="paneHead">Learner 3 · EW operator <span class="paneSub">ESM display</span></div><div class="repBody" id="rep2"></div></div>
+        <div class="pane rep" data-rep="3"><div class="paneHead">Learner 4 · Battle captain <span class="paneSub">common picture</span></div><div class="repBody"><div id="rep3map"></div></div></div>
+        <div class="pane kpiPane"><div class="paneHead">Progress</div><div id="iosKpi" class="kpis"></div></div>
+        <div class="pane objPane"><div class="paneHead">Learning objectives</div><div id="iosObj" class="objs"></div></div>
+        <div class="pane tlPane"><div class="paneHead">Session timeline</div><canvas id="iosTl"></canvas></div>
       </div>
     </section>
   </div>`;
@@ -189,7 +190,7 @@ export async function initIOS() {
   const bc = 'BroadcastChannel' in window ? new BroadcastChannel('pegasus-ios') : null;
 
   // ---------- maps & repeaters ----------
-  const look = getLook('c2-dark');
+  const look = getLook('c2-light');
   const godMap = new MapView($('iosMap'), look, AO_PRESETS[0].center, 11.5);
   const copMap = new MapView($('rep3map'), getLook('topo'), AO_PRESETS[0].center, 11.5);
   await Promise.all([godMap.setLook(look), copMap.setLook(getLook('topo'))]);
@@ -270,10 +271,10 @@ export async function initIOS() {
     const rows = mel.filter((m) => melFilter === 'all' || (melFilter === 'pending' ? m.status === 'pending' || m.status === 'armed' : m.status === 'fired'));
     body.innerHTML = rows
       .map(
-        (m) => `<tr class="mel ${m.status}"><td class="mono">${m.id}</td><td class="mono">${fmtT(m.t)}</td><td><span class="kind k-${m.kind.toLowerCase()}">${m.kind}</span></td>
-        <td><div class="melTitle">${m.title}</div><div class="melDet">${m.detail}</div></td><td>${m.target}</td><td>${m.trigger.toUpperCase()}</td>
-        <td><span class="st st-${m.status}">${m.status.toUpperCase()}${m.firedAt !== undefined ? ' ' + fmtT(m.firedAt) : ''}</span></td>
-        <td class="melAct">${m.status === 'pending' || m.status === 'armed' ? `<button data-x="${m.id}" title="Execute now">▶ EXEC</button><button data-s="${m.id}" title="Skip">SKIP</button>` : ''}</td></tr>`,
+        (m) => `<tr class="mel ${m.status}"><td class="mono">${m.id}</td><td class="mono">${fmtT(m.t)}</td><td><span class="kind k-${m.kind.toLowerCase()}">${m.kind[0] + m.kind.slice(1).toLowerCase()}</span></td>
+        <td><div class="melTitle">${m.title}</div><div class="melDet">${m.detail}</div></td><td>${m.target}</td><td>${m.trigger[0].toUpperCase() + m.trigger.slice(1)}</td>
+        <td><span class="st st-${m.status}">${({ pending: 'Upcoming', armed: 'Armed', fired: 'Done', skipped: 'Skipped' } as Record<string, string>)[m.status]}${m.firedAt !== undefined ? ' ' + fmtT(m.firedAt) : ''}</span></td>
+        <td class="melAct">${m.status === 'pending' || m.status === 'armed' ? `<button data-x="${m.id}" title="Run this event now">▶ Run</button><button data-s="${m.id}" title="Skip">Skip</button>` : ''}</td></tr>`,
       )
       .join('');
     $('melCount').textContent = `${mel.filter((m) => m.status === 'fired').length}/${mel.length} fired`;
@@ -323,18 +324,18 @@ export async function initIOS() {
     const msgs = (sc.events ?? []).filter((e) => e.type === 'message' && e.t <= t) as { text: string }[];
     const seized = msgs.filter((m) => /SEIZED/.test(m.text)).length;
     const kpi = [
-      ['BLUE STRENGTH', `${side('friend')}%`, side('friend') > 60 ? 'ok' : 'warn'],
-      ['RED STRENGTH', `${side('hostile')}%`, ''],
-      ['OBJECTIVES SEIZED', `${seized}`, seized ? 'ok' : ''],
-      ['INJECTS FIRED', `${fired.length}`, ''],
-      ['AVG RESPONSE', answered.length ? fmtRt(avgRt) : '—', avgRt > 3 ? 'warn' : 'ok'],
-      ['OPEN INJECTS', `${fired.length - answered.length}`, fired.length - answered.length > 1 ? 'warn' : ''],
+      ['Friendly strength', `${side('friend')}%`, side('friend') > 60 ? 'ok' : 'warn'],
+      ['Opposing strength', `${side('hostile')}%`, ''],
+      ['Objectives seized', `${seized}`, seized ? 'ok' : ''],
+      ['Events run', `${fired.length}`, ''],
+      ['Avg response time', answered.length ? fmtRt(avgRt) : '—', avgRt > 3 ? 'warn' : 'ok'],
+      ['Awaiting response', `${fired.length - answered.length}`, fired.length - answered.length > 1 ? 'warn' : ''],
     ];
     $('iosKpi').innerHTML = kpi.map(([l, v, c]) => `<div class="kpi ${c}"><div class="kv">${v}</div><div class="kl">${l}</div></div>`).join('');
     const objs: [string, boolean, boolean][] = [
       ['Synchronise fires with the manoeuvre (H-hour)', msgs.some((m) => /H-HOUR/.test(m.text)), true],
       ['Report first contact within 5 minutes', msgs.some((m) => /CONTACT/.test(m.text)), true],
-      ['Respond to all injects under 3 minutes', answered.length > 0 && avgRt <= 3, answered.length > 0],
+      ['Respond to all training events within 3 minutes', answered.length > 0 && avgRt <= 3, answered.length > 0],
       ['Seize the brigade objectives', seized > 0, true],
       ['Defeat the enemy counterattack', msgs.some((m) => /COUNTERATTACK/i.test(m.text)) && side('hostile') < 60, msgs.some((m) => /COUNTERATTACK/i.test(m.text))],
       ['Keep friendly strength above 60 %', side('friend') >= 60, t > 0],
@@ -346,13 +347,13 @@ export async function initIOS() {
     const W = Math.max(200, Math.round(r.width - 16)), H = Math.max(60, Math.round(r.height - 34));
     if (c.width !== W || c.height !== H) (c.width = W), (c.height = H);
     const g = c.getContext('2d')!;
-    g.fillStyle = '#0b1219';
+    g.fillStyle = '#ffffff';
     g.fillRect(0, 0, W, H);
     const T = sc.meta.durationMin;
-    const X = (x: number) => 30 + ((W - 40) * x) / T;
-    g.strokeStyle = '#2a3a4a';
-    g.fillStyle = '#7f93a8';
-    g.font = '10px Consolas';
+    const X = (x: number) => 60 + ((W - 70) * x) / T;
+    g.strokeStyle = '#e5e9f0';
+    g.fillStyle = '#6b7a8c';
+    g.font = '11px Segoe UI';
     for (let x = 0; x <= T; x += 30) {
       g.beginPath();
       g.moveTo(X(x), 4);
@@ -361,27 +362,27 @@ export async function initIOS() {
       g.fillText(fmtT(x), X(x) - 12, H - 3);
     }
     const lanes: [string, (m: MelItem) => boolean, string][] = [
-      ['SCN', (m) => m.kind === 'SCENARIO', '#5aa9ff'],
-      ['INJ', (m) => m.kind !== 'SCENARIO', '#f0b03d'],
+      ['Mission', (m) => m.kind === 'SCENARIO', '#4f46e5'],
+      ['Training', (m) => m.kind !== 'SCENARIO', '#d97706'],
     ];
     lanes.forEach(([lab, f, col], li) => {
       const y = 12 + li * ((H - 30) / 2) + 6;
-      g.fillStyle = '#7f93a8';
+      g.fillStyle = '#1f2a37';
       g.fillText(lab, 2, y + 4);
       for (const m of mel.filter(f)) {
         const tt = m.firedAt ?? m.t;
         if (tt < 0) continue;
-        g.fillStyle = m.status === 'fired' ? col : m.status === 'skipped' ? '#555' : 'rgba(127,147,168,0.6)';
+        g.fillStyle = m.status === 'fired' ? col : m.status === 'skipped' ? '#cbd5e1' : '#94a3b8';
         g.beginPath();
         g.arc(X(tt), y, m.status === 'fired' ? 5 : 3.5, 0, 7);
         g.fill();
         if (m.response && m.status === 'fired') {
-          g.fillStyle = 'rgba(79,209,139,0.6)';
+          g.fillStyle = 'rgba(14,159,142,0.55)';
           g.fillRect(X(tt), y + 6, Math.max(2, X(tt + m.response) - X(tt)), 3);
         }
       }
     });
-    g.strokeStyle = '#7dffb0';
+    g.strokeStyle = '#4f46e5';
     g.lineWidth = 2;
     g.beginPath();
     g.moveTo(X(t), 2);
@@ -428,9 +429,9 @@ export async function initIOS() {
     $('iosDtg').textContent = dtg(new Date(start + t * 60000));
     $('iosT').textContent = `T+${fmtT(t)}`;
     $<HTMLInputElement>('iosTime').value = String(t);
-    $('iosState').textContent = playing ? 'RUNNING' : 'FROZEN';
+    $('iosState').textContent = playing ? '● Running' : '❚❚ Paused';
     $('iosState').className = 'iosState ' + (playing ? 'run' : 'frz');
-    $('iosRun').textContent = playing ? '❚❚ FREEZE' : '▶ RUN';
+    $('iosRun').textContent = playing ? '❚❚ Pause' : '▶ Resume';
   }
 
   // ---------- clock ----------
