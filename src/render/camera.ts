@@ -7,6 +7,7 @@ import type { CameraKey, LonLat, Scenario } from '../scenario/types';
 import { interpCamera, sampleTrack, sideOf } from '../scenario/sim';
 
 export type CameraPath =
+  | 'fit'
   | 'static'
   | 'overwatch'
   | 'eagle'
@@ -30,6 +31,7 @@ export interface CameraPathInfo {
 }
 
 export const CAMERA_PATHS: CameraPathInfo[] = [
+  { id: 'fit', name: 'Fit All Units', needs3d: false, description: 'Keeps all ground units centered in the view with a small margin, reframing smoothly as they move.' },
   { id: 'static', name: 'Fixed Camera', needs3d: false, description: 'No movement. The camera stays exactly where you framed it.' },
   {
     id: 'overwatch',
@@ -171,6 +173,7 @@ export class CameraDirector {
     const pitch = (x: number) => (is3d ? x : 0);
     switch (path) {
       case 'static':
+      case 'fit':
         return base;
       case 'keyframes':
         return this.sc.camera?.length ? interpCamera(this.sc.camera, t) : base;

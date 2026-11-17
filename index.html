@@ -13,7 +13,7 @@
       <header id="topbar">
         <div class="sys"><span class="sysmark">◆</span><span class="sysname">PEGASUS C2 STUDIO</span></div>
         <div class="tbcenter"><span class="tblabel">MISSION</span> <span id="scnName">—</span></div>
-        <div class="tbstatus"><span class="net"><i></i>NET</span><span class="net"><i></i>DDS</span><span id="topDtg" class="mono"></span></div>
+        <div class="tbstatus"><span class="net"><i></i>NET</span><span class="net"><i></i>DDS</span><span id="topDtg" class="mono"></span><button id="btnReset" class="ico sync" title="Refresh">↻</button></div>
         <div class="tbactions">
           <button id="btnLibrary" class="ico" title="Mission library: load a saved mission with its video settings">📂</button>
           <button id="btnSave" class="ico" title="Save mission (settings, video settings and replay)">💾</button>
@@ -120,7 +120,6 @@
 
       <!-- ================= timeline ================= -->
       <footer id="timeline">
-        <button id="btnReset" title="Reset: back to the start, cameras to their start positions">⟲</button>
         <button id="play" title="Play / pause">▶</button>
         <input id="time" type="range" min="0" max="240" step="0.1" value="0" />
         <span id="timeLabel" class="mono"></span>

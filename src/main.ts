@@ -80,12 +80,53 @@ function clipBase(p: Panel): CameraKey {
   if (p.scenario && p.camPath !== 'static' && p.camPath !== 'keyframes') return { t: 0, center: p.scenario.view.center, zoom: p.scenario.view.zoom, bearing: 0, pitch: 0 };
   return refCamera(p);
 }
+/** frame all ground units (over a short time window, for smooth reframing) inside the 16:9 capture area */
+const fitCache = new Map<Panel, { key: string; cam: CameraKey | null }>();
+function fitCamera(p: Panel, tt: number): CameraKey | null {
+  const sc = p.scenario;
+  if (!sc || !p.sim || p.stage.clientWidth < 50) return null;
+  const r = p.captureRect();
+  const key = `${Math.round(tt * 4)}|${Math.round(r.w)}x${Math.round(r.h)}|${p.mode}|${sc.meta.start}`;
+  const hit = fitCache.get(p);
+  if (hit && hit.key === key) return hit.cam;
+  let w = 180, e = -180, s = 90, n = -90;
+  for (const dt of [-6, -3, 0, 3, 6]) {
+    const st = p.sim.stateAt(Math.max(0, Math.min(sc.meta.durationMin, tt + dt)), {});
+    for (const u of st.units) {
+      if (u.unit.air) continue;
+      w = Math.min(w, u.pos[0]);
+      e = Math.max(e, u.pos[0]);
+      s = Math.min(s, u.pos[1]);
+      n = Math.max(n, u.pos[1]);
+    }
+  }
+  let cam: CameraKey | null = null;
+  if (w <= e) {
+    const W = p.stage.clientWidth, H = p.stage.clientHeight;
+    const mx = r.w * 0.07, my = r.h * 0.09;
+    const hudTop = p.look.hud === 'c2-dark' && inp('L-hud').checked ? 40 : 0;
+    const c = p.view.map.cameraForBounds([[w, s], [e, n]], {
+      padding: { left: r.x + mx, right: W - r.x - r.w + mx, top: r.y + my + hudTop, bottom: H - r.y - r.h + my + (hudTop ? 28 : 0) },
+      bearing: p.mode === '3d' ? p.view.map.getBearing() : 0,
+    });
+    if (c?.center) {
+      const ll = maplibregl.LngLat.convert(c.center as any);
+      cam = { t: tt, center: [ll.lng, ll.lat], zoom: Math.min(15.5, (c.zoom ?? 12) - (p.mode === '3d' ? 0.3 : 0)) - zoomAdj(p), bearing: p.mode === '3d' ? p.view.map.getBearing() : 0, pitch: p.mode === '3d' ? 50 : 0 };
+    }
+  }
+  fitCache.set(p, { key, cam });
+  return cam;
+}
+
 function directed(p: Panel, prog: number, tt: number): CameraKey | null {
+  if (p.camPath === 'fit') return p.content === 'map' ? fitCamera(p, tt) : null;
   if (!p.director || p.camPath === 'static') return null;
   return p.director.camera(p.camPath, prog, tt, p.cameraBase ?? clipBase(p), p.mode);
 }
 function flyToAO(p: Panel) {
   if (!p.scenario) return;
+  const fit = fitCamera(p, t);
+  if (fit) return applyCam(p, fit);
   applyCam(p, { t: 0, center: p.scenario.view.center, zoom: p.scenario.view.zoom, bearing: p.mode === '3d' ? p.scenario.meta.axis ?? 0 : 0, pitch: p.mode === '3d' ? 55 : 0 });
 }
 
@@ -171,9 +212,9 @@ function linkFrom(src: Panel) {
 
 async function ensurePanels(n: number, cfgs?: PanelConfig[]) {
   const base: PanelConfig[] = [
-    { look: 'topo', mode: '2d', camPath: 'static', fog: false, title: 'VIEW 1 · MAP' },
+    { look: 'topo', mode: '2d', camPath: 'fit', fog: false, title: 'VIEW 1 · MAP' },
     { look: 'vector-topo', mode: '3d', camPath: 'overwatch', fog: false, title: 'VIEW 2 · 3D' },
-    { look: 'c2-dark', mode: '2d', camPath: 'static', fog: true, title: 'VIEW 3 · BLUE COP' },
+    { look: 'c2-dark', mode: '2d', camPath: 'fit', fog: true, title: 'VIEW 3 · BLUE COP' },
     { look: 'c2-sat', mode: '3d', camPath: 'commander', fog: false, title: 'VIEW 4 · ISR' },
   ];
   const defaults = Array.from({ length: MAX_VIEWS }, (_, i) => ({ ...base[i % 4], title: `VIEW ${i + 1} · ${base[i % 4].title!.split('·')[1].trim()}` }));
@@ -427,6 +468,7 @@ function updateTimeLabel() {
 // ================= playback loop =================
 let last = 0;
 let lastWidget = 0;
+let lastFit = 0;
 function loop(ts: number) {
   const dt = last ? (ts - last) / 1000 : 0;
   if (playing && active?.scenario) {
@@ -446,6 +488,18 @@ function loop(ts: number) {
     if (ts - lastWidget > 400) {
       lastWidget = ts;
       renderWidgets();
+    }
+  }
+  // fit-all-units views keep their framing up to date even when paused (resize, scrubbing)
+  if (!playing && ts - lastFit > 500) {
+    lastFit = ts;
+    for (const p of visiblePanels()) {
+      if (p.camPath !== 'fit' || p.content !== 'map' || p.view.map.isMoving()) continue;
+      const c = fitCamera(p, t);
+      if (c) {
+        const cur = refCamera(p);
+        if (Math.abs(cur.zoom - c.zoom) > 0.05 || Math.hypot(cur.center[0] - c.center[0], cur.center[1] - c.center[1]) > 0.001) applyCam(p, c);
+      }
     }
   }
   // live sensor views (scopes animate continuously; imagery sensors refresh when the clock moves)
@@ -1114,6 +1168,7 @@ async function recordOffline() {
         t = from + (to - from) * prog;
         await composeFrame(p, t, out, directed(p, prog, t), i / fps);
         updateTimeLabel();
+        if (i % 15 === 0) renderWidgets();
       },
       onProgress: (d, n) => {
         $('recBar').style.width = `${(100 * d) / n}%`;
@@ -1145,7 +1200,12 @@ function resetMission(toStart = clipStart()) {
   renderAll();
   renderWidgets(true);
 }
-$('btnReset').onclick = () => resetMission(0);
+$('btnReset').onclick = () => {
+  $('btnReset').classList.remove('spin');
+  void $('btnReset').offsetWidth;
+  $('btnReset').classList.add('spin');
+  resetMission(0);
+};
 
 // ---------- background rendering (separate headless Chrome, nothing rendered in this tab) ----------
 let bgJob: string | null = null;

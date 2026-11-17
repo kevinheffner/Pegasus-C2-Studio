@@ -330,3 +330,8 @@ body.headless-render #topbar, body.headless-render #rail, body.headless-render #
 #btnReset { width: 38px; }
 
 .orbLoss { display: block; font: 9.5px Consolas, monospace; color: var(--muted); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+button.ico.sync { width: 22px; height: 22px; font-size: 14px; color: #6f8296; margin-left: -6px; }
+button.ico.sync:hover { color: #cfe6ff; }
+button.ico.sync.spin { animation: spin 0.6s linear; }
+@keyframes spin { to { transform: rotate(360deg); } }

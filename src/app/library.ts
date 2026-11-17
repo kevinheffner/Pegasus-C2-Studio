@@ -50,7 +50,7 @@ const P = (look: string, mode: '2d' | '3d', camPath: any, fog = false, title?: s
 const quad = (a: PanelConfig): PanelConfig[] => [
   a,
   P('vector-topo', '3d', 'overwatch', false, 'VIEW 2 · 3D'),
-  P('c2-dark', '2d', 'static', true, 'VIEW 3 · BLUE COP'),
+  P('c2-dark', '2d', 'fit', true, 'VIEW 3 · BLUE COP'),
   P('c2-sat', '3d', 'commander', false, 'VIEW 4 · ISR'),
 ];
 const video = (vlen: number, extra: Settings = {}): Settings => ({ res: '1920x1080', fps: '30', vlen: String(vlen), vfrom: '60', vto: '', vpace: '30', recMode: 'offline', speed: '0.5', ...extra });
@@ -62,7 +62,7 @@ export const BUILTIN_PACKAGES: ScenarioPackage[] = [
     name: 'Fulda Gap – Armored Brigade Attack',
     description: 'Deliberate attack: armored brigade against a motor rifle brigade defending behind a fortified line. Topographic overlay, Overwatch Orbit video.',
     settings: { ao: 'fulda', zoom: '11.7', axis: '90', template: 'deliberate-attack', blue: 'abct', red: 'mr-bde', air: 'all', movement: 'roads', riverine: false, seed: '7', ...video(30) },
-    workspace: { layout: 1, multiAO: false, active: 0, panels: quad(P('topo', '3d', 'overwatch', false, 'VIEW 1 · MAP')) },
+    workspace: { layout: 1, multiAO: false, active: 0, panels: quad(P('topo', '2d', 'fit', false, 'VIEW 1 · MAP')) },
   },
   {
     format: 'scc-package',
@@ -114,7 +114,7 @@ export const BUILTIN_PACKAGES: ScenarioPackage[] = [
       layout: 4,
       multiAO: true,
       active: 0,
-      panels: [P('topo', '2d', 'static', false, 'AO NORTH'), P('c2-dark', '2d', 'static', false, 'AO EAST'), P('c2-sat', '2d', 'static', false, 'AO BALTIC'), P('vector-topo', '3d', 'overwatch', false, 'AO KOREA')],
+      panels: [P('topo', '2d', 'fit', false, 'AO NORTH'), P('c2-dark', '2d', 'fit', false, 'AO EAST'), P('c2-sat', '2d', 'fit', false, 'AO BALTIC'), P('vector-topo', '3d', 'overwatch', false, 'AO KOREA')],
       panelSettings: [
         { ao: 'fulda', zoom: '11.7', axis: '90', template: 'deliberate-attack', blue: 'abct', red: 'mr-bde', air: 'all', seed: '7' },
         { ao: 'suwalki', zoom: '11.7', axis: '0', template: 'meeting', blue: 'mech-bde', red: 'tank-bde', air: 'cap', seed: '21' },
