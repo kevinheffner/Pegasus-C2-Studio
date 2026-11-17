@@ -347,11 +347,11 @@ export async function initIOS() {
     const W = Math.max(200, Math.round(r.width - 16)), H = Math.max(60, Math.round(r.height - 34));
     if (c.width !== W || c.height !== H) (c.width = W), (c.height = H);
     const g = c.getContext('2d')!;
-    g.fillStyle = '#ffffff';
+    g.fillStyle = '#f5f2fb';
     g.fillRect(0, 0, W, H);
     const T = sc.meta.durationMin;
     const X = (x: number) => 60 + ((W - 70) * x) / T;
-    g.strokeStyle = '#e5e9f0';
+    g.strokeStyle = '#dcd6ee';
     g.fillStyle = '#6b7a8c';
     g.font = '11px Segoe UI';
     for (let x = 0; x <= T; x += 30) {

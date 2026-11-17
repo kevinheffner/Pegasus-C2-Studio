@@ -95,3 +95,54 @@ tr.mel.skipped { opacity: 0.45; }
 .obj .ob { width: 20px; height: 20px; flex: none; border-radius: 50%; display: grid; place-items: center; font-size: 11px; background: #eef1f6; color: var(--i-muted); }
 .obj.done .ob { background: #ccfbf1; color: var(--i-teal); } .obj.open .ob { background: #fef3c7; color: var(--i-amber); } .obj.na { color: var(--i-muted); }
 .tlPane canvas { flex: 1; margin: 8px 12px 10px; min-height: 0; }
+
+/* ---- colour & tone pass: warm, tinted surfaces instead of plain white ---- */
+#iosApp {
+  --i-bg: #e7e0d2; --i-card: #f8f4ec; --i-line: #ddd3c1; --i-soft: #efe8da; --i-text: #2a2f3a; --i-muted: #776f62;
+  background: radial-gradient(circle at 15% 0%, #efe7d6, #e2d9c7 60%, #dcd2bf);
+}
+#iosTop { background: linear-gradient(90deg, #3d3a8c, #2f6f8f 70%, #2c8a80); border-bottom: none; box-shadow: 0 2px 6px rgba(40, 40, 80, 0.25); color: #fff; }
+#iosTop .sysmark { background: rgba(255, 255, 255, 0.18); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.3); }
+#iosTop .sysname, .iosEx { color: #fff; }
+#iosTop .syssub, .iosEx .tblabel, #iosDtg, #iosTop .iosSel { color: rgba(255, 255, 255, 0.75); }
+#iosApp #iosTop select, #iosApp #iosTop button { background: rgba(255, 255, 255, 0.14); color: #fff; border-color: rgba(255, 255, 255, 0.28); }
+#iosTop select option { color: #2a2f3a; background: #f8f4ec; }
+#iosApp #iosTop button:hover { background: rgba(255, 255, 255, 0.25); color: #fff; border-color: #fff; }
+#iosApp #iosTop button.ico.rec { color: #ffb4b4; }
+.iosState.run { background: #c9f2dc; color: #116b3a; }
+.monLabel { color: #3d3a5c; }
+.monLabel small { color: #8a7f6c; }
+#iosApp button, #iosApp select, #iosApp input[type=text] { background: #fbf8f2; border-color: #d8cdb9; }
+.pane { border-color: #d6cab4; box-shadow: 0 2px 6px rgba(90, 70, 40, 0.08); }
+/* each area gets its own tint */
+.melPane .paneHead { background: #e3def3; border-color: #cfc7ea; color: #3d3a8c; }
+.mapPane .paneHead { background: #d6ebe5; border-color: #bcdcd3; color: #1f665c; }
+.jourPane .paneHead { background: #f3e3c3; border-color: #e5cfa3; color: #7a5310; }
+.ctlPane { background: #e4e3f2; border-color: #cbc8e6; }
+.rep .paneHead { background: #d9e6f2; border-color: #c0d4e8; color: #285580; }
+.rep[data-rep="3"] .paneHead { background: #dbe9d6; border-color: #c2dbba; color: #3b6a2c; }
+.kpiPane .paneHead { background: #d6ebe5; border-color: #bcdcd3; color: #1f665c; }
+.objPane .paneHead { background: #f6dccf; border-color: #ebc4b1; color: #8a3f1c; }
+.tlPane .paneHead { background: #e3def3; border-color: #cfc7ea; color: #3d3a8c; }
+.paneHead .paneSub { color: inherit; opacity: 0.7; }
+.paneHead .chips { background: rgba(255, 255, 255, 0.45); }
+#iosApp .paneHead .chips button.on { background: #3d3a8c; color: #fff; }
+.repBody { background: #1d2433; box-shadow: inset 0 0 0 3px #c9d8e8; }
+.rep[data-rep="3"] .repBody { box-shadow: inset 0 0 0 3px #c9dcc2; }
+/* master event list */
+.melTable th { background: #ece7f7; color: #5c5785; border-color: #d8d1ee; }
+.melTable td { border-color: #eae2d2; }
+.melTable tbody tr:nth-child(even) { background: #f3eee3; }
+.melTable tbody tr.mel.fired { background: #e2f1ec; }
+.melTable tbody tr.mel.fired:nth-child(even) { background: #d9ece5; }
+.jour { background: #fbf6ea; }
+.jl { border-color: #efe5d0; }
+.jourPane .row { background: #f3e9d4; border-color: #e5cfa3; }
+/* progress tiles in different tones */
+.kpis { background: #eef6f3; }
+.kpi { background: #fff; border: 1px solid transparent; }
+.kpi:nth-child(1) { background: #d7efe6; } .kpi:nth-child(2) { background: #f7dcd3; } .kpi:nth-child(3) { background: #e3def3; }
+.kpi:nth-child(4) { background: #f3e6c8; } .kpi:nth-child(5) { background: #d9e6f2; } .kpi:nth-child(6) { background: #ece3d3; }
+.objs { background: #fbf1ea; }
+.obj { border-color: #f0dccf; }
+.tlPane { background: #f5f2fb; }
