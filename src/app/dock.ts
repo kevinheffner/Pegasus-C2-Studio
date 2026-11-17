@@ -34,6 +34,8 @@ export interface Dock {
   remove(w: string): void;
   /** returns the scroll container of a widget card (or null) */
   body(w: string): HTMLElement | null;
+  /** while frozen (e.g. during a recording) the dock never reflows */
+  freeze(on: boolean): void;
 }
 
 export function initDock(o: { names: Record<string, string>; defaults: string[]; changed: () => void }): Dock {
@@ -256,15 +258,12 @@ export function initDock(o: { names: Record<string, string>; defaults: string[];
   };
 
   let roT: number | undefined;
+  let frozen = false;
   new ResizeObserver(() => {
     clearTimeout(roT);
     roT = window.setTimeout(() => {
-      if (layout().length !== lastCols) render();
-      else dock.querySelectorAll<HTMLElement>('.wcard:not(.collapsed) .wcBody').forEach((b) => {
-        const c = st.cards.find((x) => x.w === (b.closest('.wcard') as HTMLElement).dataset.w);
-        if (c) b.style.height = `${Math.min(c.h, colHeight() - CHROME)}px`;
-      });
-    }, 120);
+      if (!frozen) render(); // full re-layout so cards can never overflow the column
+    }, 150);
   }).observe(document.getElementById('dockScroll')!);
 
   const api: Dock = {
@@ -296,6 +295,10 @@ export function initDock(o: { names: Record<string, string>; defaults: string[];
       render();
     },
     body: (w) => cardEl(w)?.querySelector<HTMLElement>('.wcBody') ?? null,
+    freeze(on) {
+      frozen = on;
+      if (!on) render();
+    },
   };
   render();
   return api;

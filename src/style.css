@@ -324,3 +324,7 @@ button.ico.stop:disabled { opacity: 0.35; }
 #views { min-width: 0; min-height: 0; }
 .vhead { min-width: 0; overflow: hidden; }
 .vhead .vname { flex: 1 1 0; }
+
+/* headless background renders: no chrome around the view */
+body.headless-render #topbar, body.headless-render #rail, body.headless-render #widget, body.headless-render #timeline { display: none !important; }
+#btnReset { width: 38px; }

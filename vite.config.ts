@@ -1,6 +1,7 @@
 import { defineConfig, type Plugin } from 'vite';
 import fs from 'node:fs';
 import path from 'node:path';
+import { spawn } from 'node:child_process';
 
 /** Tiny local API so scenario packages are saved as files in ./scenarios/saved/ */
 function scenarioStore(): Plugin {
@@ -99,6 +100,71 @@ function layoutStore(): Plugin {
   };
 }
 
+/** Background render jobs: each job renders a video in a separate headless Chrome (cli/render-worker.mjs) */
+function renderJobs(): Plugin {
+  const dir = path.resolve(process.cwd(), 'out', 'render-jobs');
+  const recDir = path.resolve(process.cwd(), 'out', 'recordings');
+  return {
+    name: 'scc-render-jobs',
+    configureServer(server) {
+      server.middlewares.use('/api/recordings', (req, res) => {
+        const f = path.basename(decodeURIComponent((req.url ?? '/').slice(1).split('?')[0]));
+        const p = path.join(recDir, f);
+        if (!f || !fs.existsSync(p)) {
+          res.statusCode = 404;
+          return res.end();
+        }
+        res.setHeader('Content-Type', f.endsWith('.webm') ? 'video/webm' : 'video/mp4');
+        res.setHeader('Content-Disposition', `attachment; filename="${f}"`);
+        fs.createReadStream(p).pipe(res);
+      });
+      server.middlewares.use('/api/render-jobs', (req, res) => {
+        fs.mkdirSync(dir, { recursive: true });
+        res.setHeader('Content-Type', 'application/json');
+        const id = path.basename(decodeURIComponent((req.url ?? '/').slice(1).split('?')[0])).replace(/[^a-zA-Z0-9_-]/g, '');
+        const statusOf = (jid: string) => {
+          const f = path.join(dir, jid + '.status.json');
+          return fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, 'utf8')) : { id: jid, status: 'queued' };
+        };
+        if (req.method === 'GET' && id) return res.end(JSON.stringify(statusOf(id)));
+        if (req.method === 'DELETE' && id) {
+          const s = statusOf(id);
+          try {
+            if (s.pid) process.kill(s.pid, 'SIGTERM');
+          } catch {
+            /* already gone */
+          }
+          fs.writeFileSync(path.join(dir, id + '.status.json'), JSON.stringify({ ...s, status: 'cancelled' }));
+          return res.end(JSON.stringify({ ok: true }));
+        }
+        if (req.method === 'POST') {
+          let body = '';
+          req.on('data', (c) => (body += c));
+          req.on('end', () => {
+            try {
+              const job = JSON.parse(body);
+              const jid = 'job-' + Date.now().toString(36);
+              const host = req.headers.host ?? 'localhost:5173';
+              const file = path.join(dir, jid + '.json');
+              fs.writeFileSync(file, JSON.stringify({ ...job, id: jid, url: `http://${host}` }));
+              fs.writeFileSync(path.join(dir, jid + '.status.json'), JSON.stringify({ id: jid, status: 'queued' }));
+              const child = spawn(process.execPath, [path.resolve(process.cwd(), 'cli', 'render-worker.mjs'), file], { cwd: process.cwd(), detached: true, stdio: 'ignore' });
+              child.unref();
+              res.end(JSON.stringify({ id: jid }));
+            } catch (e) {
+              res.statusCode = 400;
+              res.end(JSON.stringify({ error: String(e) }));
+            }
+          });
+          return;
+        }
+        res.statusCode = 405;
+        res.end('{}');
+      });
+    },
+  };
+}
+
 /** Save exported sensor frames / metadata into ./out/exports/<run>/ */
 function exportStore(): Plugin {
   const root = path.resolve(process.cwd(), 'out', 'exports');
@@ -129,6 +195,6 @@ function exportStore(): Plugin {
 
 export default defineConfig({
   server: { port: 5173 },
-  plugins: [scenarioStore(), exportStore(), layoutStore()],
+  plugins: [scenarioStore(), exportStore(), layoutStore(), renderJobs()],
   optimizeDeps: { include: ['@armyc2.c5isr.renderer/mil-sym-ts-web', 'milsymbol', 'maplibre-gl'] },
 });

@@ -503,7 +503,8 @@ $('btnRecord').onclick = () => {
   if (!recording && !live && !screenRec && !flying) $('record').click();
 };
 $('btnStop').onclick = () => {
-  if (recording) recSignal.cancelled = true;
+  if (bgJob) fetch('/api/render-jobs/' + bgJob, { method: 'DELETE' });
+  else if (recording) recSignal.cancelled = true;
   else if (live || screenRec || flying) finishClip();
 };
 // where recordings are saved (also changeable in the save dialog)
@@ -894,6 +895,7 @@ async function saveFile(blob: Blob, name: string, info: string) {
   setTimeout(() => ($('topRec').textContent === '✓ saved' ? ($('topRec').textContent = '') : 0), 4000);
 }
 function setRecUI(on: boolean, label = '') {
+  dock?.freeze(on);
   $<HTMLButtonElement>('btnStop').disabled = !on;
   $('btnStop').classList.toggle('armed', on);
   $('btnRecord').classList.toggle('recording', on);
@@ -1008,7 +1010,9 @@ async function finishClip() {
     await active.view.setPixelRatio(livePrevPr);
     active.view.map.resize();
     renderAll();
-    await saveFile(r.blob, `${fileBase('live', clipStart(), t)}.${r.ext}`, 'Live recording – map view');
+    const liveEnd = t;
+    resetMission();
+    await saveFile(r.blob, `${fileBase('live', clipStart(), liveEnd)}.${r.ext}`, 'Live recording – map view');
   }
   if (screenRec) {
     const s = screenRec;
@@ -1021,7 +1025,9 @@ async function finishClip() {
     });
     s.stream.getTracks().forEach((x) => x.stop());
     const blob = new Blob(s.chunks, { type: s.mime.split(';')[0] });
-    await saveFile(blob, `${fileBase(s.label, clipStart(), t)}.${s.mime.includes('mp4') ? 'mp4' : 'webm'}`, s.label === 'window' ? 'Entire Pegasus C2 Studio window' : 'All map views');
+    const scrEnd = t;
+    resetMission();
+    await saveFile(blob, `${fileBase(s.label, clipStart(), scrEnd)}.${s.mime.includes('mp4') ? 'mp4' : 'webm'}`, s.label === 'window' ? 'Entire Pegasus C2 Studio window' : 'All map views');
   }
 }
 
@@ -1093,11 +1099,82 @@ async function recordOffline() {
         const msg = `Frame ${d}/${n} · ETA ${Math.round(((n - d) * el) / d)} s`;
         $('recStatus').textContent = msg;
         $('topRec').textContent = '● ' + msg;
+        (window as any).sccProgress?.(d, n);
       },
     }),
   ).then((r) => ({ ...r, name: sc.meta.name }));
 }
+/** back to the start of the clip: stop playback, restore every view's camera and the dock */
+function resetMission(toStart = clipStart()) {
+  setPlaying(false);
+  t = Math.max(0, toStart);
+  for (const p of panels) {
+    if (!p?.scenario) continue;
+    p.cameraBase = clipBase(p);
+    const cam = directed(p, Math.min(1, t / p.scenario.meta.durationMin), t);
+    if (cam) applyCam(p, cam);
+    else if (p.camPath === 'static' && p.content === 'map') flyToAO(p);
+    p.sensorView?.sensor.reset?.();
+    if (p.sensorView) p.sensorView.lastT = -1;
+  }
+  dock?.freeze(false);
+  $('recBar').style.width = '0%';
+  updateTimeLabel();
+  renderAll();
+  renderWidgets(true);
+}
+$('btnReset').onclick = () => resetMission(0);
+
+// ---------- background rendering (separate headless Chrome, nothing rendered in this tab) ----------
+let bgJob: string | null = null;
+async function startBackground() {
+  const p = active;
+  const name = prompt('File name for the background render (saved in out/recordings/):', `${fileBase('map', clipStart(), clipEnd())}.mp4`);
+  if (!name) return;
+  const pkg = buildPackage(scenarioOf()?.meta.title ?? 'mission', 'background render', true);
+  const r = await fetch('/api/render-jobs', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ package: pkg, view: p.idx, camera: refCamera(p), settings: collectSettings(), fileName: name.endsWith('.mp4') || name.endsWith('.webm') ? name : name + '.mp4' }),
+  });
+  if (!r.ok) throw new Error('background rendering needs the dev server (start.bat)');
+  bgJob = (await r.json()).id;
+  settingsDlg.close();
+  setRecUI(true, '◌ background render starting…');
+  dock?.freeze(false); // nothing is captured from this tab, the dock may reflow freely
+  $('recStatus').textContent = 'Rendering in a separate headless browser – you can keep working.';
+  const poll = async () => {
+    if (!bgJob) return;
+    const s = await (await fetch('/api/render-jobs/' + bgJob)).json();
+    const pr = s.progress?.total ? `${s.progress.done}/${s.progress.total}` : '';
+    if (s.status === 'done') {
+      bgJob = null;
+      setRecUI(false);
+      $('recBar').style.width = '100%';
+      const f = String(s.file).split(/[\\/]/).pop();
+      $('recStatus').innerHTML = `Background render saved → ${s.file} (${(s.size / 1e6).toFixed(1)} MB) · <a href="/api/recordings/${encodeURIComponent(f ?? "")}" download>download</a>`;
+      $('topRec').textContent = '✓ background render saved';
+      return;
+    }
+    if (s.status === 'error' || s.status === 'cancelled') {
+      bgJob = null;
+      setRecUI(false);
+      $('recStatus').textContent = `Background render ${s.status}${s.error ? ': ' + s.error : ''}`;
+      $('topRec').textContent = '';
+      return;
+    }
+    if (s.progress?.total) $('recBar').style.width = `${(100 * s.progress.done) / s.progress.total}%`;
+    $('topRec').textContent = `◌ background ${s.status} ${pr}`;
+    setTimeout(poll, 1000);
+  };
+  poll();
+}
+
 $('record').onclick = async () => {
+  if (bgJob) {
+    await fetch('/api/render-jobs/' + bgJob, { method: 'DELETE' });
+    return;
+  }
   if (live || screenRec) return finishClip();
   if (recording) {
     recSignal.cancelled = true;
@@ -1112,6 +1189,7 @@ $('record').onclick = async () => {
     if (target === 'workspace') return await startScreenCapture($('workspace'));
     if (target === 'screen') return await startScreenCapture($('app'));
     if (sel('recMode').value === 'live') return await startLive();
+    if (sel('recMode').value === 'background') return await startBackground();
     recording = true;
     setRecUI(true, '● rendering…');
     $('record').textContent = '■ Stop';
@@ -1121,10 +1199,13 @@ $('record').onclick = async () => {
     recording = false;
     setRecUI(false);
     $('record').textContent = '● Record video';
-    await saveFile(r.blob, `${fileBase('map', from, t)}.${r.ext}`, stopped ? 'Stopped early – partial video' : 'Frame-perfect map view');
+    const endT = t;
+    resetMission(from);
+    await saveFile(r.blob, `${fileBase('map', from, endT)}.${r.ext}`, stopped ? 'Stopped early – partial video' : 'Frame-perfect map view');
   } catch (e) {
     console.error(e);
     $('recStatus').textContent = 'Recording failed: ' + (e as Error).message;
+    resetMission();
   } finally {
     if (recording) {
       recording = false;
@@ -1307,7 +1388,32 @@ inp('importFile').onchange = async () => {
     renderWidgets(true);
   },
   showWidget,
+  /** used by cli/render-worker.mjs: render the given view frame-perfectly with the given video settings */
+  async renderJob(o: { view: number; camera?: CameraKey; settings: Settings }) {
+    applySettings(o.settings, true);
+    document.body.classList.add('headless-render');
+    const p = panels[o.view] ?? active;
+    setActive(p);
+    maximized = true;
+    renderLayout();
+    await new Promise((r) => setTimeout(r, 800));
+    p.fit();
+    if (o.camera && p.camPath === 'static') applyCam(p, o.camera);
+    const r = await recordOffline();
+    renderedVideo = r.blob;
+    return { size: r.blob.size, ext: r.ext, frames: Math.round((Number(inp('vlen').value) || 30) * Number(sel('fps').value)) };
+  },
+  async chunk(i: number, size = 4 * 1024 * 1024) {
+    if (!renderedVideo) return null;
+    const part = renderedVideo.slice(i * size, (i + 1) * size);
+    if (!part.size) return null;
+    const buf = new Uint8Array(await part.arrayBuffer());
+    let s = '';
+    for (let k = 0; k < buf.length; k += 0x8000) s += String.fromCharCode(...buf.subarray(k, k + 0x8000));
+    return btoa(s);
+  },
 };
+let renderedVideo: Blob | null = null;
 (window as any).sccState = () => active?.stateAt(t, viewOpts());
 
 // ================= boot =================
