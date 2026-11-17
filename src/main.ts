@@ -665,6 +665,26 @@ document.querySelectorAll<HTMLButtonElement>('#intelFilter button').forEach(
       renderWidgets(true);
     }),
 );
+/** nominal vehicles / personnel by unit type and echelon (generic, for the ORBAT read-out) */
+function establishment(sidc: string): { veh: number; pers: number } | null {
+  if (sidc.slice(4, 6) !== '10') return null;
+  const e = sidc.slice(10, 16);
+  const ech = sidc.slice(8, 10);
+  const hq = sidc[7] === '2';
+  let veh = 40, pers = 600;
+  if (e.startsWith('1205')) (veh = 44), (pers = 550);
+  else if (e.startsWith('121102')) (veh = 40), (pers = 650);
+  else if (e.startsWith('121104')) (veh = 45), (pers = 700);
+  else if (e.startsWith('1211')) (veh = 20), (pers = 750);
+  else if (e.startsWith('1213')) (veh = 30), (pers = 420);
+  else if (e.startsWith('1303')) (veh = 18), (pers = 450);
+  else if (e.startsWith('1301')) (veh = 12), (pers = 300);
+  else if (e.startsWith('1407')) (veh = 25), (pers = 450);
+  const f = ech === '15' ? 0.28 : ech === '18' ? 4 : ech === '21' ? 12 : 1;
+  if (hq) return { veh: Math.round(12 * (ech === '21' ? 3 : ech === '18' ? 2 : 1)), pers: Math.round(250 * (ech === '21' ? 3 : ech === '18' ? 2 : 1)) };
+  return { veh: Math.max(4, Math.round(veh * f)), pers: Math.max(40, Math.round(pers * f)) };
+}
+
 const symCache = new Map<string, string>();
 const miniSym = (sidc: string) => {
   let s = symCache.get(sidc);
@@ -740,7 +760,9 @@ function renderWidgets(force = false) {
           const pct = Math.round(u.strength * 100);
           const color = pct >= 70 ? 'var(--green)' : pct >= 40 ? 'var(--amber)' : 'var(--rec)';
           const unknown = side === 'hostile' && active.fog;
-          return `<div class="orb ${u.status === 'destroyed' ? 'dead' : ''}" data-id="${u.unit.id}"><span class="sym">${miniSym(u.sidc)}</span><span class="nm">${esc(m.uniqueDesignation ?? u.unit.id)}${m.higherFormation ? ' / ' + esc(m.higherFormation) : ''}${u.stale ? ' <i style="color:var(--muted)">(last known)</i>' : ''}</span>${
+          const est = !u.unit.air && !unknown ? establishment(u.sidc) : null;
+          const loss = est ? `<span class="orbLoss">${Math.round(est.veh * u.strength)}/${est.veh} veh · ${Math.round(est.pers * (1 - u.strength) * 0.9)} cas</span>` : '';
+          return `<div class="orb ${u.status === 'destroyed' ? 'dead' : ''}" data-id="${u.unit.id}"><span class="sym">${miniSym(u.sidc)}</span><span class="nm">${esc(m.uniqueDesignation ?? u.unit.id)}${m.higherFormation ? ' / ' + esc(m.higherFormation) : ''}${u.stale ? ' <i style="color:var(--muted)">(last known)</i>' : ''}${loss}</span>${
             u.unit.air || unknown ? '<span class="pct">—</span>' : `<span class="bar"><i style="width:${pct}%;background:${color}"></i></span><span class="pct">${pct}%</span>`
           }</div>`;
         })

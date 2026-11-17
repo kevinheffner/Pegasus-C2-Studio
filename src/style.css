@@ -328,3 +328,5 @@ button.ico.stop:disabled { opacity: 0.35; }
 /* headless background renders: no chrome around the view */
 body.headless-render #topbar, body.headless-render #rail, body.headless-render #widget, body.headless-render #timeline { display: none !important; }
 #btnReset { width: 38px; }
+
+.orbLoss { display: block; font: 9.5px Consolas, monospace; color: var(--muted); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

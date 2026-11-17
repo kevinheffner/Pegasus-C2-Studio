@@ -341,7 +341,7 @@ export async function generate(o: GenOptions): Promise<Scenario> {
         pathLen: 0,
         s: 0,
         moving: false,
-        str: r.range(0.85, 1),
+        str: 1,
         posture,
         phase,
         lane: v0,
@@ -883,8 +883,8 @@ export async function generate(o: GenOptions): Promise<Scenario> {
     // ===== status reporting =====
     for (const a of actors) {
       if (a.dead || a.gone) continue;
-      if (a.reportedStr - a.str >= 0.05) {
-        a.reportedStr = Math.round(a.str * 20) / 20;
+      if (a.reportedStr - a.str >= 0.01) {
+        a.reportedStr = Math.round(a.str * 100) / 100;
         events.push({ t, type: 'strength', unit: a.id, value: Math.round(a.str * 100) / 100 });
       }
       if (a.str < 0.15 && a.status !== 'destroyed') {
