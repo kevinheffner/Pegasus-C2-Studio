@@ -89,7 +89,7 @@ export class SensorView {
 
   /** render a frame into any canvas (also used for screenshots and frame-perfect video) */
   async renderTo(out: HTMLCanvasElement, sc: Scenario, sim: Simulation, t: number, vt: number) {
-    if (this.busy) return;
+    while (this.busy) await new Promise((r) => setTimeout(r, 15)); // wait for an in-flight live frame (recordings must never skip)
     this.busy = true;
     try {
       const map = getImageryMap();

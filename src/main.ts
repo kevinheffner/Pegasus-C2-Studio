@@ -7,7 +7,7 @@ import { generate, type GenOptions } from './scenario/generator';
 import { Simulation, sideOf, type ViewOptions } from './scenario/sim';
 import type { CameraKey, LonLat, Scenario } from './scenario/types';
 import { dtg } from './render/hud';
-import { recordVideo, download, startLiveRecording, type LiveRecording } from './export/recorder';
+import { recordVideo, download, startLiveRecording, createEncoder, type LiveRecording } from './export/recorder';
 import { saveOutput, saveTarget, setSaveTarget, chooseFolder, folderName } from './export/save';
 import { importFile } from './import/overlay';
 import { extentKm, toMgrs } from './geo/geo';
@@ -152,6 +152,7 @@ async function createPanel(i: number, cfg: PanelConfig) {
       if (what === 'cam') x.cameraBase = clipBase(x);
       if (x === active) syncActiveControls();
       if (what === 'content') {
+        refreshRecTargets();
         renderWidgets(true);
         if (x.sensorView) x.sensorView.lastT = -1;
       }
@@ -262,6 +263,31 @@ function setActive(p: Panel) {
   renderWidgets(true);
 }
 
+/** the recording target lists every open view by name, then the workspace and the whole window */
+function refreshRecTargets() {
+  const views = visiblePanels();
+  const opts = (short: boolean) =>
+    views.map((p) => {
+      const title = (p.el.querySelector('.vtitle') as HTMLElement)?.textContent ?? `VIEW ${p.idx + 1}`;
+      return `<option value="view:${p.idx}">${short ? '' : 'Show '}${title}${p === active ? ' (active)' : ''}</option>`;
+    }).join('') +
+    `<option value="workspace">${short ? 'All views' : 'Show all views (workspace, screen capture)'}</option><option value="screen">${short ? 'Entire window' : 'Show entire Pegasus C2 Studio window'}</option>`;
+  for (const [id, short] of [['recTarget', false], ['recTargetTop', true]] as const) {
+    const s = sel(id);
+    const prev = s.value;
+    s.innerHTML = opts(short);
+    const keep = [...s.options].some((o) => o.value === prev);
+    s.value = keep ? prev : `view:${active?.idx ?? 0}`;
+  }
+}
+/** the panel a "view:N" target refers to (or null for workspace / window) */
+function targetPanel(): Panel | null {
+  const v = sel('recTarget').value;
+  if (v === 'view' || !v) return active;
+  if (!v.startsWith('view:')) return null;
+  return panels[Number(v.slice(5))] ?? active;
+}
+
 /** apply a layout preset (or a saved tree) */
 async function setLayout(id: LayoutId | number, t?: LNode) {
   const n = normLayout(id);
@@ -287,6 +313,7 @@ function renderLayout() {
   });
   document.querySelectorAll<HTMLButtonElement>('#layoutBtns button').forEach((b) => b.classList.toggle('on', !maximized && b.dataset.l === layout && JSON.stringify(PRESET_TREES[layout]) === JSON.stringify(stripF(tree))));
   panels.forEach((p) => p?.el.classList.toggle('maximized', maximized && p === active));
+  refreshRecTargets();
   requestAnimationFrame(() => {
     panels.forEach((p) => p?.fit());
     renderAll();
@@ -505,7 +532,7 @@ function loop(ts: number) {
   // live sensor views (scopes animate continuously; imagery sensors refresh when the clock moves)
   for (const p of visiblePanels()) {
     const sv = p.sensorView;
-    if (p.content.startsWith('sensor:') && sv && p.scenario && p.sim && sv.due(t, ts, playing)) sv.renderLive(p.scenario, p.sim, Math.min(t, p.scenario.meta.durationMin), vclock());
+    if (!recording && p.content.startsWith('sensor:') && sv && p.scenario && p.sim && sv.due(t, ts, playing)) sv.renderLive(p.scenario, p.sim, Math.min(t, p.scenario.meta.durationMin), vclock());
   }
   applyPad(dt);
   last = ts;
@@ -1055,7 +1082,7 @@ async function startScreenCapture(target: HTMLElement) {
   const chunks: Blob[] = [];
   rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
   rec.start(1000);
-  screenRec = { rec, chunks, stream, mime, label: target.id === 'app' ? 'window' : 'workspace' };
+  screenRec = { rec, chunks, stream, mime, label: target.id === 'app' ? 'window' : target.id === 'workspace' ? 'workspace' : 'view' };
   track.addEventListener('ended', () => screenRec && finishClip());
   t = clipStart();
   settingsDlg.close();
@@ -1103,7 +1130,7 @@ async function finishClip() {
     const blob = new Blob(s.chunks, { type: s.mime.split(';')[0] });
     const scrEnd = t;
     resetMission();
-    await saveFile(blob, `${fileBase(s.label, clipStart(), scrEnd)}.${s.mime.includes('mp4') ? 'mp4' : 'webm'}`, s.label === 'window' ? 'Entire Pegasus C2 Studio window' : 'All map views');
+    await saveFile(blob, `${fileBase(s.label, clipStart(), scrEnd)}.${s.mime.includes('mp4') ? 'mp4' : 'webm'}`, s.label === 'window' ? 'Entire Pegasus C2 Studio window' : s.label === 'view' ? 'Single view (screen capture)' : 'All views');
   }
 }
 
@@ -1138,6 +1165,12 @@ async function screenshot(): Promise<Blob> {
 }
 $('shot').onclick = async () => {
   if (!active.scenario) return;
+  const tp = targetPanel();
+  if (tp && tp !== active) setActive(tp);
+  if (active.content.startsWith('widget:')) {
+    $('recStatus').textContent = 'Widget views can be recorded as video (background or screen capture); screenshots are for map and sensor views.';
+    return;
+  }
   await saveFile(await screenshot(), `${fileBase('screenshot')}.png`, 'Screenshot – map view');
 };
 const recSignal = { cancelled: false };
@@ -1270,6 +1303,13 @@ $('record').onclick = async () => {
   try {
     if (target === 'workspace') return await startScreenCapture($('workspace'));
     if (target === 'screen') return await startScreenCapture($('app'));
+    // a specific view: make it the active one, then record it with the chosen mode
+    const tp = targetPanel();
+    if (tp && tp !== active) setActive(tp);
+    if (active.content.startsWith('widget:')) {
+      if (sel('recMode').value === 'background') return await startBackground();
+      return await startScreenCapture(active.el); // widgets are live HTML: real-time capture of just this view
+    }
     if (sel('recMode').value === 'live') return await startLive();
     if (sel('recMode').value === 'background') return await startBackground();
     recording = true;
@@ -1481,9 +1521,47 @@ inp('importFile').onchange = async () => {
     await new Promise((r) => setTimeout(r, 800));
     p.fit();
     if (o.camera && p.camPath === 'static') applyCam(p, o.camera);
-    const r = await recordOffline();
+    recording = true; // pauses live sensor refreshes in this page
+    let r;
+    try {
+      r = await recordOffline();
+    } finally {
+      recording = false;
+    }
     renderedVideo = r.blob;
     return { size: r.blob.size, ext: r.ext, frames: Math.round((Number(inp('vlen').value) || 30) * Number(sel('fps').value)) };
+  },
+  /** worker, widget views: maximize the view and report where it is, then frames are fed with encodeFrame() */
+  async prepareWidgetJob(o: { view: number; settings: Settings }) {
+    applySettings(o.settings, true);
+    document.body.classList.add('headless-render');
+    const p = panels[o.view] ?? active;
+    setActive(p);
+    maximized = true;
+    renderLayout();
+    await new Promise((r) => setTimeout(r, 600));
+    const r = p.el.getBoundingClientRect();
+    const fps = Number(sel('fps').value);
+    const frames = Math.round((Number(inp('vlen').value) || 30) * fps);
+    widgetEnc = await createEncoder({ width: Math.round(r.width), height: Math.round(r.height), fps });
+    return { clip: { x: Math.round(r.x), y: Math.round(r.y), width: widgetEnc.width, height: widgetEnc.height }, frames, fps, from: clipStart(), to: clipEnd() };
+  },
+  async setWidgetTime(tt: number) {
+    t = tt;
+    updateTimeLabel();
+    renderWidgets(true);
+    await new Promise((r) => requestAnimationFrame(() => r(null)));
+  },
+  async encodeFrame(b64: string, i: number) {
+    const bin = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+    const bmp = await createImageBitmap(new Blob([bin], { type: 'image/jpeg' }));
+    await widgetEnc!.add(bmp, i);
+    bmp.close();
+  },
+  async finishWidgetJob() {
+    const r = await widgetEnc!.finish();
+    renderedVideo = r.blob;
+    return { size: r.blob.size, ext: r.ext };
   },
   async chunk(i: number, size = 4 * 1024 * 1024) {
     if (!renderedVideo) return null;
@@ -1496,6 +1574,7 @@ inp('importFile').onchange = async () => {
   },
 };
 let renderedVideo: Blob | null = null;
+let widgetEnc: Awaited<ReturnType<typeof createEncoder>> | null = null;
 (window as any).sccState = () => active?.stateAt(t, viewOpts());
 
 // ================= boot =================

@@ -31,7 +31,21 @@ async function main() {
   status({ status: 'loading mission', progress: { done: 0, total: 0 } });
   await page.evaluate((pkg) => window.scc.applyPackage(pkg), job.package);
   status({ status: 'rendering', progress: { done: 0, total: 0 } });
-  const res = await page.evaluate((o) => window.scc.renderJob(o), { view: job.view, camera: job.camera, settings: job.settings });
+  const isWidget = String(job.package?.workspace?.panels?.[job.view]?.content ?? '').startsWith('widget:');
+  let res;
+  if (isWidget) {
+    // widget views are HTML: step the mission clock frame by frame and capture the view element
+    await page.setViewportSize({ width: W + 12, height: H + 12 }); // view fills the output size (workspace padding 6 px)
+    const prep = await page.evaluate((o) => window.scc.prepareWidgetJob(o), { view: job.view, settings: job.settings });
+    for (let i = 0; i < prep.frames; i++) {
+      const tt = prep.from + ((prep.to - prep.from) * i) / Math.max(1, prep.frames - 1);
+      await page.evaluate((tt) => window.scc.setWidgetTime(tt), tt);
+      const jpg = await page.screenshot({ clip: prep.clip, type: 'jpeg', quality: 92 });
+      await page.evaluate(([b64, i]) => window.scc.encodeFrame(b64, i), [jpg.toString('base64'), i]);
+      if (i % 5 === 0) status({ status: 'rendering', progress: { done: i + 1, total: prep.frames } });
+    }
+    res = { ...(await page.evaluate(() => window.scc.finishWidgetJob())), frames: prep.frames };
+  } else res = await page.evaluate((o) => window.scc.renderJob(o), { view: job.view, camera: job.camera, settings: job.settings });
   // fetch the video in base64 chunks
   fs.mkdirSync(outDir, { recursive: true });
   const file = path.join(outDir, job.fileName.replace(/[\\/:*?"<>|]+/g, '_'));

@@ -82,6 +82,45 @@ export async function recordVideo(o: RecordOptions): Promise<RecordResult> {
   return { blob: new Blob([buf], { type: mime }), ext: container, mime };
 }
 
+/** incremental encoder: feed frames one by one (used for widget-view renders in the background worker) */
+export async function createEncoder(o: { width: number; height: number; fps: number; bitrate?: number }) {
+  const width = o.width - (o.width % 2), height = o.height - (o.height % 2);
+  const { container, config } = await pickCodec(width, height, o.fps, o.bitrate ?? 10_000_000);
+  const muxer: any =
+    container === 'mp4'
+      ? new Mp4Muxer({ target: new Mp4Target(), video: { codec: 'avc', width, height, frameRate: o.fps }, fastStart: 'in-memory' })
+      : new WebmMuxer({ target: new WebmTarget(), video: { codec: config.codec.startsWith('vp09') ? 'V_VP9' : 'V_VP8', width, height, frameRate: o.fps } });
+  let err: unknown = null;
+  const enc = new VideoEncoder({ output: (c, m) => muxer.addVideoChunk(c, m), error: (e) => (err = e) });
+  enc.configure(config);
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const g = canvas.getContext('2d')!;
+  const dur = 1e6 / o.fps;
+  return {
+    width,
+    height,
+    async add(src: CanvasImageSource, i: number) {
+      if (err) throw err;
+      g.fillStyle = '#0a0f15';
+      g.fillRect(0, 0, width, height);
+      g.drawImage(src, 0, 0, width, height);
+      const vf = new VideoFrame(canvas, { timestamp: Math.round(i * dur), duration: Math.round(dur) });
+      enc.encode(vf, { keyFrame: i % (o.fps * 2) === 0 });
+      vf.close();
+      while (enc.encodeQueueSize > 4) await new Promise((r) => setTimeout(r, 5));
+    },
+    async finish(): Promise<RecordResult> {
+      await enc.flush();
+      enc.close();
+      muxer.finalize();
+      const mime = container === 'mp4' ? 'video/mp4' : 'video/webm';
+      return { blob: new Blob([muxer.target.buffer], { type: mime }), ext: container, mime };
+    },
+  };
+}
+
 export interface LiveRecording {
   /** stop and return the finished video */
   stop(): Promise<RecordResult>;
