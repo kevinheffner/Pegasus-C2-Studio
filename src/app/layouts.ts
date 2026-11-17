@@ -9,7 +9,7 @@ import type { PanelConfig } from './panel';
 
 export interface WorkspaceLayout {
   dock: DockLayout;
-  views: { layout: 1 | 4; panels: PanelConfig[]; active: number };
+  views: { layout: string | number; panels: PanelConfig[]; active: number; colFrac?: number; rowFrac?: number };
   toggles: Record<string, boolean | string>;
   saved: string;
 }
@@ -91,7 +91,7 @@ export async function openLayouts(host: LayoutHost) {
       ? names
           .map((n) => {
             const l = f.layouts[n];
-            const sum = `${l.views.layout} view${l.views.layout > 1 ? 's' : ''} · ${l.dock.cards.map((c) => c.w.toUpperCase()).join(', ') || 'no widgets'}`;
+            const sum = `layout ${l.views.layout} · ${l.dock.cards.map((c) => c.w.toUpperCase()).join(', ') || 'no widgets'}`;
             return `<div class="ritem lyItem"><div class="rt"><span class="rk">${f.default === n ? '★ DEFAULT' : 'LAYOUT'}</span><span>${new Date(l.saved).toLocaleString()}</span></div><div class="rtitle">${esc(n)}</div><div class="hint">${esc(sum)}</div><div class="row"><button data-a="apply" data-n="${esc(n)}" class="ghost small2">Apply</button><button data-a="def" data-n="${esc(n)}" class="ghost small2">${f.default === n ? 'Unset default' : 'Make default'}</button><button data-a="del" data-n="${esc(n)}" class="ghost small2">Delete</button></div></div>`;
           })
           .join('')
@@ -137,7 +137,7 @@ export async function openLayouts(host: LayoutHost) {
     await store(f);
     await host.apply({
       dock: { cards: [{ w: 'intel', h: 240, collapsed: false }, { w: 'orbat', h: 240, collapsed: false }], width: 270, hidden: false },
-      views: { layout: 1, active: 0, panels: [] },
+      views: { layout: '1', active: 0, panels: [] },
       toggles: {},
       saved: '',
     });

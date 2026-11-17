@@ -13,7 +13,7 @@ import { importFile } from './import/overlay';
 import { extentKm, toMgrs } from './geo/geo';
 import { Panel, type PanelConfig } from './app/panel';
 import { buildReports, type ChatLine, type Report } from './app/reports';
-import { BUILTIN_PACKAGES, deleteSaved, listSaved, loadSaved, saveToDisk, type ScenarioPackage, type Settings } from './app/library';
+import { BUILTIN_PACKAGES, deleteSaved, listSaved, loadSaved, saveToDisk, LAYOUTS, normLayout, layoutCount, type LayoutId, type ScenarioPackage, type Settings } from './app/library';
 import { initHome } from './home';
 import { initDock, type Dock } from './app/dock';
 import { openLayouts, applyDefaultLayout, type LayoutHost } from './app/layouts';
@@ -46,7 +46,8 @@ for (const k of PARAM_KEYS) {
 // ================= state =================
 const panels: Panel[] = [];
 let active!: Panel;
-let layout: 1 | 4 = 1;
+let layout: LayoutId = '1';
+let prevLayout: LayoutId = '4';
 let multiAO = false;
 let t = 0;
 let playing = false;
@@ -55,12 +56,14 @@ const reportCache = new WeakMap<Scenario, { reports: Report[]; chat: ChatLine[] 
 const userChat: ChatLine[] = [];
 const viewsEl = $('views');
 
-const visiblePanels = () => (layout === 1 ? [active] : panels.slice(0, 4));
+const visiblePanels = () => (layout === '1' ? (active ? [active] : []) : panels.slice(0, layoutCount(layout)).filter(Boolean));
+const mapPanels = () => visiblePanels().filter((p) => p.content === 'map');
 const scenarioOf = () => active?.scenario ?? null;
 const viewOpts = (): ViewOptions => ({ trailMin: Number(sel('trails').value) });
 const hudOpts = () => ({ banner: inp('banner').value, markStyle: sel('markStyle').value as 'none' | 'corner' | 'banner', chrome: inp('L-hud').checked });
 const zoomAdj = (p: Panel) => Math.log2(Math.max(100, p.captureRect().w) / REF_W);
 const maxDuration = () => Math.max(1, ...visiblePanels().map((p) => p.scenario?.meta.durationMin ?? 0));
+const vclock = () => performance.now() / 1000;
 
 // ---------- panel helpers that respect the reference zoom ----------
 function applyCam(p: Panel, cam: CameraKey) {
@@ -96,13 +99,22 @@ async function createPanel(i: number, cfg: PanelConfig) {
     activate: (x) => setActive(x),
     maximize: (x) => {
       setActive(x);
-      setLayout(layout === 1 ? 4 : 1);
+      if (layout === '1') setLayout(prevLayout);
+      else {
+        prevLayout = layout;
+        setLayout('1');
+      }
     },
     changed: (x, what) => {
       if (what === 'cam') x.cameraBase = clipBase(x);
       if (x === active) syncActiveControls();
+      if (what === 'content') {
+        renderWidgets(true);
+        if (x.sensorView) x.sensorView.lastT = -1;
+      }
       renderAll();
     },
+    hostWidget: (x, prev, next) => hostWidget(x, prev, next),
   });
   panels[i] = p;
   await p.init();
@@ -111,8 +123,15 @@ async function createPanel(i: number, cfg: PanelConfig) {
     p.fit();
     const w = p.captureRect().w;
     // keep the same ground framing when the panel changes size
-    if (lastW > 0 && w > 0 && Math.abs(w - lastW) > 2) p.view.map.setZoom(p.view.map.getZoom() + Math.log2(w / lastW));
-    if (w > 0) lastW = w;
+    const shown = p.el.offsetParent !== null && p.stage.clientWidth > 120;
+    if (shown && lastW > 120 && Math.abs(w - lastW) > 2 && w / lastW < 4 && lastW / w < 4) p.view.map.setZoom(p.view.map.getZoom() + Math.log2(w / lastW));
+    // first time the view is actually visible: frame the AO for its real size
+    if (shown && lastW <= 120 && p.scenario) {
+      const cam = directed(p, Math.min(1, t / p.scenario.meta.durationMin), t);
+      if (cam) applyCam(p, cam);
+      else flyToAO(p);
+    }
+    if (shown) lastW = w;
     renderPanel(p);
   }).observe(p.el.querySelector('.vbody')!);
   p.view.map.on('move', () => {
@@ -164,6 +183,31 @@ async function ensurePanels(n: number, cfgs?: PanelConfig[]) {
   }
 }
 
+/** move a widget pane into / out of a view; a widget lives in one place at a time */
+let hostingGuard = false;
+function hostWidget(p: Panel, prev: string | null, next: string | null) {
+  const pane = (w: string) => document.querySelector<HTMLElement>(`.wpane[data-w="${w}"]`);
+  if (prev) {
+    const el = pane(prev);
+    if (el && p.widgetBox.contains(el)) $('paneStore').appendChild(el);
+  }
+  if (next) {
+    // another view showing the same widget goes back to its map
+    for (const o of panels) if (o && o !== p && o.content === 'widget:' + next) o.setContent('map');
+    hostingGuard = true;
+    if (dock?.getState().cards.some((c) => c.w === next)) dock.remove(next);
+    hostingGuard = false;
+    const el = pane(next);
+    if (el) {
+      el.classList.add('on');
+      p.widgetBox.innerHTML = '';
+      p.widgetBox.appendChild(el);
+    }
+  } else p.widgetBox.innerHTML = '';
+  if (dock && !hostingGuard) dock.setState(dock.getState()); // re-render dock placeholders
+  renderWidgets(true);
+}
+
 function setActive(p: Panel) {
   if (active === p) return;
   active = p;
@@ -174,18 +218,91 @@ function setActive(p: Panel) {
   renderWidgets(true);
 }
 
-async function setLayout(n: 1 | 4) {
+async function setLayout(id: LayoutId | number) {
+  const n = normLayout(id);
   layout = n;
-  if (n === 4) await ensurePanels(4);
-  viewsEl.className = `layout-${n}`;
-  $('btnLayout1').classList.toggle('on', n === 1);
-  $('btnLayout4').classList.toggle('on', n === 4);
+  await ensurePanels(layoutCount(n));
+  if (n !== '1' && active && active.idx >= layoutCount(n)) setActive(panels[0]);
+  viewsEl.className = `layout-${n.replace('+', 'p')}`;
+  document.querySelectorAll<HTMLButtonElement>('#layoutBtns button').forEach((b) => b.classList.toggle('on', b.dataset.l === n));
+  applySplit();
   requestAnimationFrame(() => {
     panels.forEach((p) => p?.fit());
     renderAll();
   });
   updateTimeMax();
 }
+
+// ================= resizable view boundaries =================
+let colFrac = 0.5;
+let rowFrac = 0.5;
+const hasCols = () => ['2v', '1+2', '2+1', '4'].includes(layout);
+const hasRows = () => ['2h', '1+2', '2+1', '4'].includes(layout);
+function applySplit() {
+  viewsEl.style.gridTemplateColumns = hasCols() ? `${colFrac}fr ${1 - colFrac}fr` : '';
+  viewsEl.style.gridTemplateRows = hasRows() ? `${rowFrac}fr ${1 - rowFrac}fr` : '';
+  requestAnimationFrame(placeSplitters);
+}
+const vSplit = document.createElement('div');
+const hSplit = document.createElement('div');
+vSplit.className = 'vsplit';
+hSplit.className = 'hsplit';
+vSplit.title = hSplit.title = 'Drag to resize the views · double-click to reset';
+$('workspace').append(vSplit, hSplit);
+function placeSplitters() {
+  const ws = $('workspace').getBoundingClientRect();
+  const vr = viewsEl.getBoundingClientRect();
+  const vis = visiblePanels();
+  const rect = (i: number) => panels[i]?.el.getBoundingClientRect();
+  vSplit.style.display = hasCols() && vis.length > 1 ? '' : 'none';
+  hSplit.style.display = hasRows() && vis.length > 1 ? '' : 'none';
+  if (hasCols()) {
+    const a = layout === '2+1' ? rect(0) : rect(0);
+    const x = a ? a.right + 3 - ws.left : vr.left + vr.width * colFrac - ws.left;
+    Object.assign(vSplit.style, { left: `${x - 4}px`, top: `${vr.top - ws.top}px`, height: `${vr.height}px` });
+  }
+  if (hasRows()) {
+    const first = layout === '1+2' ? rect(1) : rect(0);
+    const y = first ? first.bottom + 3 - ws.top : vr.top + vr.height * rowFrac - ws.top;
+    let x0 = vr.left, x1 = vr.right;
+    const vx = vSplit.getBoundingClientRect().left + 4;
+    if (layout === '1+2') x0 = vx;
+    if (layout === '2+1') x1 = vx;
+    Object.assign(hSplit.style, { top: `${y - 4}px`, left: `${x0 - ws.left}px`, width: `${x1 - x0}px` });
+  }
+}
+function dragSplit(el: HTMLElement, axis: 'x' | 'y') {
+  el.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    el.setPointerCapture(e.pointerId);
+    el.classList.add('dragging');
+    const move = (ev: PointerEvent) => {
+      const vr = viewsEl.getBoundingClientRect();
+      const f = axis === 'x' ? (ev.clientX - vr.left) / vr.width : (ev.clientY - vr.top) / vr.height;
+      const v = Math.max(0.15, Math.min(0.85, f));
+      if (axis === 'x') colFrac = v;
+      else rowFrac = v;
+      applySplit();
+    };
+    const up = () => {
+      el.removeEventListener('pointermove', move);
+      el.removeEventListener('pointerup', up);
+      el.classList.remove('dragging');
+      panels.forEach((p) => p?.fit());
+      renderAll();
+    };
+    el.addEventListener('pointermove', move);
+    el.addEventListener('pointerup', up);
+  });
+  el.addEventListener('dblclick', () => {
+    if (axis === 'x') colFrac = 0.5;
+    else rowFrac = 0.5;
+    applySplit();
+  });
+}
+dragSplit(vSplit, 'x');
+dragSplit(hSplit, 'y');
+new ResizeObserver(() => placeSplitters()).observe(viewsEl);
 
 // ================= scenario attach / generate =================
 function attachScenario(p: Panel, sc: Scenario, fly: boolean) {
@@ -317,6 +434,7 @@ function renderHud(p: Panel) {
   p.drawPreviewHud(p.stateAt(t, viewOpts()), hudOpts());
 }
 function renderPanel(p: Panel) {
+  if (p.content !== 'map') return;
   const st = p.stateAt(t, viewOpts());
   if (st) p.view.update(st);
   p.drawPreviewHud(st, hudOpts());
@@ -359,6 +477,11 @@ function loop(ts: number) {
       renderWidgets();
     }
   }
+  // live sensor views (scopes animate continuously; imagery sensors refresh when the clock moves)
+  for (const p of visiblePanels()) {
+    const sv = p.sensorView;
+    if (p.content.startsWith('sensor:') && sv && p.scenario && p.sim && sv.due(t, ts, playing)) sv.renderLive(p.scenario, p.sim, Math.min(t, p.scenario.meta.durationMin), vclock());
+  }
   applyPad(dt);
   last = ts;
   requestAnimationFrame(loop);
@@ -390,8 +513,20 @@ document.querySelectorAll<HTMLButtonElement>('[data-close]').forEach((b) => (b.o
 $('btnSettings').onclick = () => settingsDlg.showModal();
 $('btnLibrary').onclick = $('ioLibrary').onclick = () => openLibrary();
 $('btnSave').onclick = $('ioSave').onclick = () => openSave();
-$('btnLayout1').onclick = () => setLayout(1);
-$('btnLayout4').onclick = () => setLayout(4);
+$('layoutBtns').innerHTML = LAYOUTS.map((l) => `<button class="ico lay" data-l="${l.id}" title="${l.name}">${layoutIcon(l.id)}</button>`).join('');
+document.querySelectorAll<HTMLButtonElement>('#layoutBtns button').forEach((b) => (b.onclick = () => setLayout(b.dataset.l as LayoutId)));
+function layoutIcon(id: string) {
+  const r = (x: number, y: number, w: number, h: number) => `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="1"/>`;
+  const cells: Record<string, string> = {
+    '1': r(2, 3, 16, 12),
+    '2v': r(2, 3, 7.5, 12) + r(10.5, 3, 7.5, 12),
+    '2h': r(2, 3, 16, 5.5) + r(2, 9.5, 16, 5.5),
+    '1+2': r(2, 3, 9, 12) + r(12, 3, 6, 5.5) + r(12, 9.5, 6, 5.5),
+    '2+1': r(2, 3, 6, 5.5) + r(2, 9.5, 6, 5.5) + r(9, 3, 9, 12),
+    '4': r(2, 3, 7.5, 5.5) + r(10.5, 3, 7.5, 5.5) + r(2, 9.5, 7.5, 5.5) + r(10.5, 9.5, 7.5, 5.5),
+  };
+  return `<svg viewBox="0 0 20 18" width="20" height="18" fill="none" stroke="currentColor" stroke-width="1.4">${cells[id]}</svg>`;
+}
 $('btnShot').onclick = () => $('shot').click();
 $('btnRecord').onclick = () => {
   if (!recording && !live && !screenRec && !flying) $('record').click();
@@ -452,7 +587,7 @@ const TOGGLE_IDS = ['L-friend', 'L-hostile', 'L-air', 'L-graphics', 'L-labels', 
 const layoutHost: LayoutHost = {
   capture: () => ({
     dock: dock.getState(),
-    views: { layout, active: active.idx, panels: panels.filter(Boolean).map((p) => p.config()) },
+    views: { layout, active: active.idx, panels: panels.filter(Boolean).map((p) => p.config()), colFrac, rowFrac },
     toggles: Object.fromEntries(TOGGLE_IDS.map((id) => {
       const e = document.getElementById(id) as HTMLInputElement | HTMLSelectElement;
       return [id, e instanceof HTMLInputElement && e.type === 'checkbox' ? e.checked : e.value];
@@ -465,7 +600,9 @@ const layoutHost: LayoutHost = {
       for (let i = 0; i < l.views.panels.length; i++) if (panels[i]) await panels[i].applyConfig(l.views.panels[i]);
     }
     if (l.views) {
-      await setLayout(l.views.layout);
+      colFrac = (l.views as any).colFrac ?? 0.5;
+      rowFrac = (l.views as any).rowFrac ?? 0.5;
+      await setLayout(normLayout(l.views.layout));
       setActive(panels[Math.min(l.views.active ?? 0, panels.length - 1)] ?? panels[0]);
     }
     for (const [id, v] of Object.entries(l.toggles ?? {})) {
@@ -587,13 +724,14 @@ let lastWidgetKey = '';
 function renderWidgets(force = false) {
   const sc = scenarioOf();
   if (!sc) return;
-  const key = `${dock?.open().join(',')}|${Math.floor(t)}|${intelFilter}|${active.idx}|${sc.meta.start}`;
+  const key = `${dock?.open().join(',')}|${visiblePanels().map((p) => p.content).join(',')}|${Math.floor(t)}|${intelFilter}|${active.idx}|${sc.meta.start}`;
   if (!force && key === lastWidgetKey) return;
   lastWidgetKey = key;
   const D = (x: number) => dtg(new Date(new Date(sc.meta.start).getTime() + x * 60000));
   let rc = reportCache.get(sc);
   if (!rc) reportCache.set(sc, (rc = buildReports(sc)));
-  for (const widget of dock?.open() ?? []) {
+  const hosted = visiblePanels().filter((p) => p.content.startsWith('widget:')).map((p) => p.content.slice(7));
+  for (const widget of [...new Set([...(dock?.open() ?? []), ...hosted])]) {
   if (widget === 'intel') {
     const list = rc.reports.filter((r) => r.t <= t && r.kind !== 'FIRE' && (intelFilter === 'all' || r.kind === intelFilter)).slice(-80).reverse();
     $('intelList').innerHTML = list.length
@@ -648,7 +786,7 @@ function renderWidgets(force = false) {
     const lines = [...rc.chat.filter((c) => c.t <= t), ...userChat.filter((c) => c.t <= t)].sort((a, b) => a.t - b.t).slice(-120);
     const el = $('chatList');
     el.innerHTML = lines.map((c) => `<div class="cl ${c.from === 'ME' ? 'me' : ''}"><span class="ct">${D(c.t).slice(0, 6)}Z</span><b>${esc(c.from)}:</b> ${esc(c.text)}</div>`).join('') || '<div class="empty">Channel quiet.</div>';
-    const body = dock.body('chat');
+    const body = dock.body('chat') ?? panels.find((p) => p?.content === 'widget:chat')?.widgetBox;
     if (body) body.scrollTop = body.scrollHeight;
   }
   }
@@ -706,7 +844,7 @@ $('generate').onclick = () => doGenerate();
 inp('multiAO').onchange = async () => {
   multiAO = inp('multiAO').checked;
   if (multiAO) {
-    await setLayout(4);
+    await setLayout('4');
     for (const p of panels) if (p && !p.settings) p.settings = collectScenarioSettings();
     updateMissionTitle();
   } else {
@@ -931,7 +1069,9 @@ async function withCaptureResolution<T>(p: Panel, W: number, fn: () => Promise<T
     renderAll();
   }
 }
-async function composeFrame(p: Panel, tt: number, out: HTMLCanvasElement, cam?: CameraKey | null) {
+async function composeFrame(p: Panel, tt: number, out: HTMLCanvasElement, cam?: CameraKey | null, vt = vclock()) {
+  if (p.content.startsWith('sensor:') && p.sensorView && p.scenario && p.sim) return p.sensorView.renderTo(out, p.scenario, p.sim, tt, vt);
+  if (p.content.startsWith('widget:')) throw new Error('The active view shows a widget – pick a map or sensor view, or record the entire window.');
   const st = p.stateAt(tt, viewOpts());
   if (!st) throw new Error('No mission loaded');
   await p.view.renderFrame(st, cam ? { ...cam, zoom: cam.zoom + zoomAdj(p) } : undefined);
@@ -975,7 +1115,7 @@ async function recordOffline() {
       renderFrame: async (i, out) => {
         const prog = i / Math.max(1, frames - 1);
         t = from + (to - from) * prog;
-        await composeFrame(p, t, out, directed(p, prog, t));
+        await composeFrame(p, t, out, directed(p, prog, t), i / fps);
         updateTimeLabel();
       },
       onProgress: (d, n) => {
@@ -1055,10 +1195,10 @@ async function applyPackage(pkg: ScenarioPackage) {
   multiAO = !!pkg.workspace?.multiAO;
   inp('multiAO').checked = multiAO;
   const ws = pkg.workspace;
-  const n = ws?.layout === 4 || multiAO ? 4 : 1;
+  const n = multiAO ? 4 : Math.max(layoutCount(ws?.layout), ws?.panels?.length ?? 1);
   await ensurePanels(n, ws?.panels);
   for (let i = 0; i < (ws?.panels?.length ?? 0); i++) if (panels[i]) await panels[i].applyConfig(ws.panels[i]);
-  await setLayout(ws?.layout ?? 1);
+  await setLayout(multiAO ? '4' : normLayout(ws?.layout));
   setActive(panels[Math.min(ws?.active ?? 0, panels.length - 1)] ?? panels[0]);
   if (multiAO) {
     for (let i = 0; i < 4; i++) {
@@ -1097,7 +1237,7 @@ async function openLibrary() {
     return [
       AO_PRESETS.find((a) => a.id === s.ao)?.name.split(',')[0] ?? 'Custom AO',
       TEMPLATES.find((x) => x.id === s.template)?.name.split(' (')[0] ?? '',
-      p.workspace?.multiAO ? '4 AOs' : p.workspace?.layout === 4 ? '4 views' : '1 view',
+      p.workspace?.multiAO ? '4 AOs' : layoutCount(p.workspace?.layout) > 1 ? `${layoutCount(p.workspace?.layout)} views` : '1 view',
       cam ? '🎥 ' + cam : '',
       `${s.vlen ?? 30}s ${s.res ?? ''}`,
     ].filter(Boolean);
@@ -1205,7 +1345,7 @@ async function bootCop() {
   await ensurePanels(1);
   active = panels[0];
   active.el.classList.add('active');
-  await setLayout(1);
+  await setLayout('1');
   setupDock();
   inp('zoom').value = '11.7';
   $('zoomVal').textContent = '11.7';

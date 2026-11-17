@@ -674,7 +674,9 @@ export const RADAR: Sensor = {
   },
   render(c, g) {
     const { w, h } = c;
-    const cx = w * 0.42, cy = h * 0.52, R = h * 0.45;
+    // scope sized to the view: keep room for the text panel on the right
+    const R = Math.min(h * 0.45, w * 0.36);
+    const cx = Math.min(w * 0.42, w * 0.77 - R), cy = h * 0.52;
     const site = radarSite(c);
     const rangeKm = Number(c.p.rangeKm) || autoRange(c, site);
     const pal = colormap(c.p.palette);

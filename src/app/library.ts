@@ -9,8 +9,21 @@ import type { PanelConfig } from './panel';
 
 export type Settings = Record<string, string | boolean>;
 
+/** view layouts: single · 2 side by side · 2 stacked · big left + 2 right · 2 left + big right · 2×2 */
+export type LayoutId = '1' | '2v' | '2h' | '1+2' | '2+1' | '4';
+export const LAYOUTS: { id: LayoutId; n: number; name: string }[] = [
+  { id: '1', n: 1, name: 'Single view' },
+  { id: '2v', n: 2, name: 'Two views side by side' },
+  { id: '2h', n: 2, name: 'Two views stacked' },
+  { id: '1+2', n: 3, name: 'Large view left, two stacked right' },
+  { id: '2+1', n: 3, name: 'Two stacked left, large view right' },
+  { id: '4', n: 4, name: 'Four views (2×2)' },
+];
+export const normLayout = (l: unknown): LayoutId => (l === 4 || l === '4' ? '4' : LAYOUTS.some((x) => x.id === l) ? (l as LayoutId) : '1');
+export const layoutCount = (l: unknown) => LAYOUTS.find((x) => x.id === normLayout(l))!.n;
+
 export interface WorkspaceConfig {
-  layout: 1 | 4;
+  layout: LayoutId | 1 | 4;
   multiAO: boolean;
   active: number;
   panels: PanelConfig[];

@@ -98,7 +98,10 @@ export function drawHud(ctx: CanvasRenderingContext2D, w: number, h: number, s: 
     ctx.fillText('COP', 14, 22);
     ctx.fillStyle = '#e8f1ff';
     ctx.font = font(13, 'normal', true);
-    ctx.fillText((scenario.meta.title ?? scenario.meta.name).slice(0, 60), 60, 22);
+    // keep the title clear of the counters and DTG on the right in narrow views
+    const maxTitle = Math.max(8, Math.floor((w - 470) / 7.8));
+    const ttl = scenario.meta.title ?? scenario.meta.name;
+    ctx.fillText(ttl.length > maxTitle ? ttl.slice(0, maxTitle - 1) + '…' : ttl, 60, 22);
     const d = dtg(now);
     ctx.font = font(16, 'bold', true);
     const dw = ctx.measureText(d).width;

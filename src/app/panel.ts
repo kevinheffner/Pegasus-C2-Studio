@@ -9,6 +9,18 @@ import { CAMERA_PATHS, CameraDirector, type CameraPath } from '../render/camera'
 import { drawHud, type HudContext } from '../render/hud';
 import { Simulation, type SimState, type ViewOptions } from '../scenario/sim';
 import type { CameraKey, LonLat, Scenario } from '../scenario/types';
+import { SensorView, SENSOR_CHOICES } from './sensorview';
+
+export const WIDGET_CHOICES: { id: string; name: string }[] = [
+  { id: 'intel', name: 'INTEL reports' },
+  { id: 'orbat', name: 'ORBAT' },
+  { id: 'fires', name: 'FIRES' },
+  { id: 'chat', name: 'CHAT' },
+  { id: 'layers', name: 'LAYERS' },
+  { id: 'map', name: 'MAP tools' },
+];
+/** what a view shows: 'map' | 'sensor:<id>' | 'widget:<id>' */
+export type ViewContent = string;
 
 export interface PanelConfig {
   look: string;
@@ -16,6 +28,7 @@ export interface PanelConfig {
   camPath: CameraPath;
   fog: boolean;
   title?: string;
+  content?: ViewContent;
 }
 
 export class Panel {
@@ -34,6 +47,10 @@ export class Panel {
   cameraBase: CameraKey | null = null;
   /** scenario settings snapshot (multi-AO mode) */
   settings: Record<string, string | boolean> | null = null;
+  content: ViewContent = 'map';
+  sensorView: SensorView | null = null;
+  widgetBox: HTMLElement;
+  private contentSel: HTMLSelectElement;
   private lookSel: HTMLSelectElement;
   private camSel: HTMLSelectElement;
   private fogBtn: HTMLButtonElement;
@@ -49,7 +66,9 @@ export class Panel {
     private hooks: {
       activate: (p: Panel) => void;
       maximize: (p: Panel) => void;
-      changed: (p: Panel, what: 'look' | 'mode' | 'cam' | 'fog') => void;
+      changed: (p: Panel, what: 'look' | 'mode' | 'cam' | 'fog' | 'content') => void;
+      /** move a widget pane in/out of this view (handled by the app so the dock stays consistent) */
+      hostWidget: (p: Panel, prev: string | null, next: string | null) => void;
     },
   ) {
     this.look = getLook(cfg.look);
@@ -59,6 +78,7 @@ export class Panel {
     this.el.innerHTML = `
       <div class="vhead">
         <span class="vtitle">${this.title}</span>
+        <select class="vcontent" title="What this view shows"></select>
         <span class="vname"></span>
         <span class="vspacer"></span>
         <select class="vlook" title="Map style for this view"></select>
@@ -67,11 +87,18 @@ export class Panel {
         <button class="vfog" title="Blue COP: show the enemy only where detected (fog of war)">COP</button>
         <button class="vmax" title="Maximize / restore this view">⤢</button>
       </div>
-      <div class="vbody"><div class="vstage"><div class="vmap"></div><canvas class="vhud"></canvas></div></div>`;
+      <div class="vbody"><div class="vstage"><div class="vmap"></div><canvas class="vhud"></canvas></div><div class="vsensor"></div><div class="vwidget"></div></div>`;
     host.appendChild(this.el);
     this.stage = this.el.querySelector('.vstage')!;
     this.hud = this.el.querySelector('.vhud')!;
     this.nameEl = this.el.querySelector('.vname')!;
+    this.widgetBox = this.el.querySelector('.vwidget')!;
+    this.contentSel = this.el.querySelector('.vcontent')!;
+    this.contentSel.innerHTML =
+      '<option value="map">🗺 Map (COP)</option>' +
+      '<optgroup label="Sensors">' + SENSOR_CHOICES.map((c) => `<option value="sensor:${c.id}">${c.icon} ${c.name}</option>`).join('') + '</optgroup>' +
+      '<optgroup label="Widgets">' + WIDGET_CHOICES.map((c) => `<option value="widget:${c.id}">▣ ${c.name}</option>`).join('') + '</optgroup>';
+    this.contentSel.onchange = () => this.setContent(this.contentSel.value);
     this.lookSel = this.el.querySelector('.vlook')!;
     this.camSel = this.el.querySelector('.vcam')!;
     this.fogBtn = this.el.querySelector('.vfog')!;
@@ -100,6 +127,39 @@ export class Panel {
     this.camPath = cfg.camPath;
     this.fog = cfg.fog;
     this.mode = cfg.mode;
+    this.el.dataset.kind = 'map';
+    if (cfg.content && cfg.content !== 'map') queueMicrotask(() => this.setContent(cfg.content!));
+  }
+
+  /** header title follows the content: VIEW n · MAP label / sensor / widget */
+  private mapLabel: string | null = null;
+  updateTitle() {
+    if (this.mapLabel === null) this.mapLabel = this.title.includes('·') ? this.title.split('·').slice(1).join('·').trim() : 'MAP';
+    const kind = this.content.split(':')[0];
+    const id = this.content.split(':')[1];
+    const label = kind === 'map' ? this.mapLabel : kind === 'sensor' ? ({ eoir: 'EO/IR', sar: 'SAR', radar: 'RADAR', esm: 'ESM', sonar: 'SONAR' } as Record<string, string>)[id] ?? id.toUpperCase() : WIDGET_CHOICES.find((w) => w.id === id)?.name.split(' ')[0].toUpperCase() ?? id;
+    const base = this.title.split('·')[0].trim();
+    (this.el.querySelector('.vtitle') as HTMLElement).textContent = `${base} · ${label}`;
+  }
+
+  /** switch what the view shows: map, a sensor display or a widget */
+  setContent(c: ViewContent) {
+    const prev = this.content;
+    const prevWidget = prev.startsWith('widget:') ? prev.slice(7) : null;
+    const nextWidget = c.startsWith('widget:') ? c.slice(7) : null;
+    this.content = c;
+    const kind = c.split(':')[0];
+    this.el.dataset.kind = kind;
+    if (kind === 'sensor') {
+      const id = c.slice(7);
+      if (!this.sensorView) this.sensorView = new SensorView(this.el.querySelector('.vsensor') as HTMLElement, id);
+      else if (this.sensorView.sensor.id !== id) this.sensorView.setSensor(id);
+    }
+    if (prevWidget !== nextWidget) this.hooks.hostWidget(this, prevWidget, nextWidget);
+    this.contentSel.value = c;
+    this.updateTitle();
+    if (kind === 'map') requestAnimationFrame(() => this.fit());
+    this.hooks.changed(this, 'content');
   }
 
   async init() {
@@ -109,18 +169,20 @@ export class Panel {
   }
 
   config(): PanelConfig {
-    return { look: this.look.id, mode: this.mode, camPath: this.camPath, fog: this.fog, title: this.title };
+    return { look: this.look.id, mode: this.mode, camPath: this.camPath, fog: this.fog, title: this.title, content: this.content };
   }
 
   async applyConfig(c: PanelConfig) {
     if (c.title) {
       this.title = c.title;
+      this.mapLabel = null;
       (this.el.querySelector('.vtitle') as HTMLElement).textContent = c.title;
     }
     this.camPath = c.camPath;
     this.fog = c.fog;
     if (c.look !== this.look.id) await this.setLook(c.look);
     this.setMode(c.mode, false);
+    this.setContent(c.content ?? 'map');
     this.syncControls();
   }
 
@@ -131,7 +193,8 @@ export class Panel {
     this.fogBtn.classList.toggle('on', this.fog);
     this.view.fog = this.fog;
     this.modeBtns.forEach((b) => b.classList.toggle('on', b.dataset.m === this.mode));
-    this.nameEl.textContent = this.scenario ? this.scenario.meta.title ?? this.scenario.meta.name : '';
+    this.nameEl.textContent = this.content === 'map' && this.scenario ? this.scenario.meta.title ?? this.scenario.meta.name : '';
+    this.contentSel.value = this.content;
   }
 
   async setLook(id: string) {

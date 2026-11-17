@@ -84,7 +84,7 @@ export function initDock(o: { names: Record<string, string>; defaults: string[];
 
   function render() {
     // move panes back to the store, rebuild cards column by column, re-insert panes
-    for (const p of document.querySelectorAll<HTMLElement>('.wpane')) store.appendChild(p);
+    for (const p of document.querySelectorAll<HTMLElement>('.wpane')) if (!p.closest('.vwidget')) store.appendChild(p);
     dock.innerHTML = '';
     const H = colHeight();
     const cols = layout();
@@ -114,7 +114,9 @@ export function initDock(o: { names: Record<string, string>; defaults: string[];
         <div class="wcResize" title="Drag to resize"></div>`;
       if (!c.collapsed) (el.querySelector('.wcBody') as HTMLElement).style.height = `${Math.min(c.h, H - CHROME)}px`;
       const p = pane(c.w);
-      if (p) {
+      if (p && p.closest('.vwidget')) {
+        el.querySelector('.wcBody')!.innerHTML = '<div class="empty">Shown in a view.</div>';
+      } else if (p) {
         p.classList.add('on');
         el.querySelector('.wcBody')!.appendChild(p);
       }

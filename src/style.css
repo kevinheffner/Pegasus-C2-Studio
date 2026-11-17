@@ -123,8 +123,19 @@ button.ico.rec.recording { background: var(--rec); color: #fff; animation: blink
 #workspace { flex: 1; min-width: 0; display: flex; padding: 6px; background: #070b10; }
 #views { flex: 1; display: grid; gap: 6px; min-height: 0; }
 #views.layout-1 { grid-template-columns: 1fr; grid-template-rows: 1fr; }
-#views.layout-4 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
 #views.layout-1 .vpanel:not(.active) { display: none; }
+#views.layout-2v { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr; }
+#views.layout-2h { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; }
+#views.layout-1p2 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; grid-template-areas: "a b" "a c"; }
+#views.layout-2p1 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; grid-template-areas: "a c" "b c"; }
+#views.layout-4 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
+#views.layout-1p2 .vpanel:nth-child(1), #views.layout-2p1 .vpanel:nth-child(1) { grid-area: a; }
+#views.layout-1p2 .vpanel:nth-child(2), #views.layout-2p1 .vpanel:nth-child(2) { grid-area: b; }
+#views.layout-1p2 .vpanel:nth-child(3), #views.layout-2p1 .vpanel:nth-child(3) { grid-area: c; }
+#views.layout-2v .vpanel:nth-child(n+3), #views.layout-2h .vpanel:nth-child(n+3), #views.layout-1p2 .vpanel:nth-child(n+4), #views.layout-2p1 .vpanel:nth-child(n+4) { display: none; }
+.layoutBtns { display: inline-flex; gap: 1px; }
+button.ico.lay { width: 28px; color: #9fb3c8; }
+button.ico.lay.on { color: #fff; }
 .vpanel { display: flex; flex-direction: column; min-height: 0; min-width: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 4px; overflow: hidden; }
 .vpanel.active { border-color: #2b77bd; box-shadow: 0 0 0 1px #2b77bd; }
 .vhead { flex: none; display: flex; align-items: center; gap: 5px; padding: 3px 6px; background: #0f1821; border-bottom: 1px solid var(--line); }
@@ -269,3 +280,23 @@ label.file input { margin-top: 4px; color: var(--muted); width: 100%; }
 button.ico.stop { color: #8293a6; font-size: 15px; }
 button.ico.stop.armed { color: #fff; background: #8a2626; border-color: #b33a3a; }
 button.ico.stop:disabled { opacity: 0.35; }
+
+/* ---------- view content: map / sensor / widget ---------- */
+.vsensor, .vwidget { display: none; position: absolute; inset: 0; }
+.vpanel[data-kind="sensor"] .vsensor { display: block; background: #000; }
+.vpanel[data-kind="widget"] .vwidget { display: block; overflow-y: auto; padding: 8px 12px; background: var(--panel); }
+.vpanel[data-kind="sensor"] .vstage, .vpanel[data-kind="widget"] .vstage { visibility: hidden; }
+.vpanel:not([data-kind="map"]) .vlook, .vpanel:not([data-kind="map"]) .vseg, .vpanel:not([data-kind="map"]) .vcam, .vpanel:not([data-kind="map"]) .vfog { display: none; }
+.vsensorCanvas { width: 100%; height: 100%; display: block; }
+.vhead .vcontent { max-width: 170px; font-weight: 600; }
+.vwidget .wpane { display: block; }
+
+/* ---------- draggable view boundaries ---------- */
+#workspace { position: relative; }
+.vsplit, .hsplit { position: absolute; z-index: 8; }
+.vsplit { width: 8px; cursor: col-resize; }
+.hsplit { height: 8px; cursor: row-resize; }
+.vsplit::after, .hsplit::after { content: ''; position: absolute; background: transparent; transition: background 0.12s; }
+.vsplit::after { left: 3px; top: 0; bottom: 0; width: 2px; }
+.hsplit::after { top: 3px; left: 0; right: 0; height: 2px; }
+.vsplit:hover::after, .hsplit:hover::after, .vsplit.dragging::after, .hsplit.dragging::after { background: var(--accent); box-shadow: 0 0 6px var(--accent); }

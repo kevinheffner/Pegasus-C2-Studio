@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Pegasus C2 Studio</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" href="/favicon.ico" sizes="64x64" />
   </head>
   <body>
     <div id="app">
@@ -17,8 +18,7 @@
           <button id="btnLibrary" class="ico" title="Mission library: load a saved mission with its video settings">📂</button>
           <button id="btnSave" class="ico" title="Save mission (settings, video settings and replay)">💾</button>
           <span class="sep"></span>
-          <button id="btnLayout1" class="ico" title="Single view">▢</button>
-          <button id="btnLayout4" class="ico" title="Four views (2×2)">⊞</button>
+          <span id="layoutBtns" class="layoutBtns"></span>
           <button id="btnLayouts" class="ico" title="Workspace layouts: save the widget arrangement as default or under a name">▤</button>
           <span class="sep"></span>
           <button id="btnShot" class="ico" title="Screenshot of the active view (PNG)">📷</button>
