@@ -12,3 +12,6 @@ samples/imports/
 *.avif
 Mission-1.png
 example-outputs/
+
+schemas/projects/
+schemas/blueprints/

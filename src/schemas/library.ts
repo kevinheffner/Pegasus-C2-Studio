@@ -2,7 +2,7 @@
  * Animated schema library: how C2 systems and simulations come together for training, rehearsal and analysis.
  * Original explanatory graphics; standard names and numbers as published by SISO, IEEE and NATO.
  */
-import type { Schema, SNode } from './engine';
+import { EXTRA_DRAW, type Schema, type SNode } from './engine';
 
 const REF = {
   c2sim: 'SISO-STD-019-2020 C2SIM; SISO-STD-020-2020 Land Operations Extension; NATO STANAG 4856 Ed. 1 (2023)',
@@ -427,6 +427,7 @@ const fmn: Schema = {
     { t0: 14, t1: 19, ids: ['s1'] },
     { t0: 20, t1: 27, ids: ['s2'] },
   ],
+  drawId: 'fmn-spirals',
   draw: (g, t, th, h) => {
     // spiral specifications: incremental, overlapping releases
     const a = h.appear(t, 27, 1);
@@ -540,5 +541,8 @@ const lcim: Schema = {
     { t: 20, text: 'Standards address different levels: networks and FMN, HLA and data formats, ontologies and FOMs, agreements and process.' },
   ],
 };
+
+EXTRA_DRAW['fmn-spirals'] = fmn.draw!;
+delete fmn.draw;
 
 export const SCHEMAS: Schema[] = [c2simOverview, c2simStates, c2simOntology, hlaFederation, netnFom, dseep, cax, rehearsal, lvc, fmn, lcim];

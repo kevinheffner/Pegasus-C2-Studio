@@ -193,8 +193,69 @@ function exportStore(): Plugin {
   };
 }
 
+
+/** generic JSON document store: GET / (list), GET /:id, PUT /:id, DELETE /:id (schema projects, blueprints) */
+function jsonStore(route: string, folder: string[]): Plugin {
+  const dir = path.resolve(process.cwd(), ...folder);
+  const safe = (f: string) => path.basename(f).replace(/[^a-zA-Z0-9._-]/g, '');
+  return {
+    name: 'scc-json-store-' + route,
+    configureServer(server) {
+      server.middlewares.use(route, (req, res) => {
+        fs.mkdirSync(dir, { recursive: true });
+        const send = (code: number, body: unknown) => {
+          res.statusCode = code;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify(body));
+        };
+        const id = safe(decodeURIComponent((req.url ?? '/').slice(1).split('?')[0]));
+        const file = path.join(dir, id + '.json');
+        try {
+          if (req.method === 'GET' && !id) {
+            const list = fs.readdirSync(dir).filter((f) => f.endsWith('.json')).map((f) => {
+              try {
+                const j = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
+                return { id: f.replace(/.json$/, ''), name: j.name ?? j.title ?? f, description: j.description ?? '', updated: j.updated ?? '', count: Array.isArray(j.items) ? j.items.length : undefined };
+              } catch {
+                return { id: f.replace(/.json$/, ''), name: f, description: '(unreadable)' };
+              }
+            }).sort((a, b) => String(b.updated ?? '').localeCompare(String(a.updated ?? '')));
+            return send(200, list);
+          }
+          if (req.method === 'GET') {
+            if (!fs.existsSync(file)) return send(404, { error: 'not found' });
+            res.setHeader('Content-Type', 'application/json');
+            return res.end(fs.readFileSync(file));
+          }
+          if (req.method === 'DELETE' && id) {
+            fs.rmSync(file, { force: true });
+            return send(200, { ok: true });
+          }
+          if ((req.method === 'PUT' || req.method === 'POST') && id) {
+            const chunks: Buffer[] = [];
+            req.on('data', (c) => chunks.push(c));
+            req.on('end', () => {
+              try {
+                const j = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+                fs.writeFileSync(file, JSON.stringify(j, null, 1));
+                send(200, { ok: true, id });
+              } catch (e) {
+                send(400, { error: String(e) });
+              }
+            });
+            return;
+          }
+          send(405, { error: 'method' });
+        } catch (e) {
+          send(500, { error: String(e) });
+        }
+      });
+    },
+  };
+}
+
 export default defineConfig({
   server: { port: 5173 },
-  plugins: [scenarioStore(), exportStore(), layoutStore(), renderJobs()],
+  plugins: [scenarioStore(), exportStore(), layoutStore(), renderJobs(), jsonStore('/api/schema-projects', ['schemas', 'projects']), jsonStore('/api/schema-blueprints', ['schemas', 'blueprints'])],
   optimizeDeps: { include: ['@armyc2.c5isr.renderer/mil-sym-ts-web', 'milsymbol', 'maplibre-gl'] },
 });

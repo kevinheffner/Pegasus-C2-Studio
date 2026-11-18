@@ -5,9 +5,38 @@
 export const VW = 1920;
 export const VH = 1080;
 
+export interface Effects {
+  /** 0 = none … 1 = very bouncy overshoot when an item appears */
+  bounce: number;
+  /** seconds an item takes to appear */
+  appearDur: number;
+  /** afterglow intensity 0–1 (new items and highlighted items keep glowing) */
+  glowPct: number;
+  /** seconds the afterglow takes to fade */
+  glowDur: number;
+  /** seconds a link takes to draw */
+  linkDur: number;
+  /** box corner radius (px at 1080p) */
+  radius: number;
+  /** size of travelling message tags (1 = normal) */
+  packetScale: number;
+  /** pulse highlighted items */
+  pulse: boolean;
+}
+export const DEFAULT_FX: Effects = { bounce: 0.35, appearDur: 0.6, glowPct: 0.6, glowDur: 1.5, linkDur: 0.7, radius: 16, packetScale: 1, pulse: true };
+
 export interface Theme {
   id: string;
   name: string;
+  /** background: gradient (bg[0]→bg[1]), solid (bg[1]) or an uploaded image */
+  bgKind?: 'gradient' | 'solid' | 'image';
+  bgImage?: string; // data URL
+  bgFit?: 'cover' | 'contain';
+  /** 0–1: veil of the background colour over the image */
+  bgDim?: number;
+  font?: string;
+  textScale?: number;
+  fx?: Partial<Effects>;
   bg: [string, string];
   grid: string | null;
   text: string;
@@ -24,6 +53,8 @@ export interface Theme {
 export const THEMES: Theme[] = [
   { id: 'blueprint', name: 'Blueprint', bg: ['#123a63', '#0c2a4a'], grid: 'rgba(160,200,255,0.08)', text: '#eef5ff', muted: '#a9c3e3', box: 'rgba(14,40,72,0.92)', boxLine: 'rgba(170,210,255,0.55)', group: 'rgba(170,210,255,0.35)', link: 'rgba(200,225,255,0.55)', caption: 'rgba(6,22,42,0.86)', captionText: '#ffffff', accents: ['#5fb4ff', '#ffc857', '#6ee7b7', '#ff8a80', '#c4a7ff', '#7dd3fc', '#fda4af'] },
   { id: 'paper', name: 'Classroom (light)', bg: ['#f6f1e7', '#ece4d4'], grid: 'rgba(120,100,60,0.07)', text: '#23262f', muted: '#6f6656', box: '#fffdf8', boxLine: '#cbbfa6', group: 'rgba(110,90,50,0.35)', link: 'rgba(80,70,50,0.55)', caption: 'rgba(45,42,90,0.92)', captionText: '#ffffff', accents: ['#4f46e5', '#d97706', '#0e9f8e', '#dc2626', '#7c3aed', '#0284c7', '#db2777'] },
+  { id: 'chalk', name: 'Chalkboard', bg: ['#26433a', '#1d352e'], grid: null, text: '#f4f1e6', muted: '#c9c3ae', box: 'rgba(30,55,47,0.9)', boxLine: 'rgba(244,241,230,0.6)', group: 'rgba(244,241,230,0.4)', link: 'rgba(244,241,230,0.6)', caption: 'rgba(16,30,26,0.88)', captionText: '#fffbe9', accents: ['#ffe08a', '#9ee6c9', '#ffb3a7', '#a8d8ff', '#e6c1ff', '#fff3c4', '#c6f0a0'], font: 'Trebuchet MS', fx: { bounce: 0.6, glowPct: 0.3 } },
+  { id: 'sunrise', name: 'Sunrise (warm light)', bg: ['#fff4e6', '#fde2c8'], grid: null, text: '#3a2a1f', muted: '#8a6d58', box: '#fffaf3', boxLine: '#e7c3a0', group: 'rgba(160,100,60,0.4)', link: 'rgba(120,80,50,0.55)', caption: 'rgba(120,53,15,0.92)', captionText: '#ffffff', accents: ['#ea580c', '#0d9488', '#7c3aed', '#db2777', '#2563eb', '#ca8a04', '#16a34a'], fx: { bounce: 0.5, glowPct: 0.45 } },
   { id: 'slate', name: 'Slate', bg: ['#2b3140', '#1d2230'], grid: 'rgba(255,255,255,0.04)', text: '#f1f3f7', muted: '#a4adbf', box: 'rgba(42,49,64,0.95)', boxLine: 'rgba(255,255,255,0.22)', group: 'rgba(255,255,255,0.25)', link: 'rgba(255,255,255,0.45)', caption: 'rgba(15,18,26,0.88)', captionText: '#ffffff', accents: ['#38bdf8', '#fbbf24', '#34d399', '#f87171', '#a78bfa', '#22d3ee', '#f472b6'] },
 ];
 
@@ -96,7 +127,36 @@ export interface Schema {
   refs: string[];
   /** extra drawing on top of the diagram (virtual coordinates) */
   draw?: (g: CanvasRenderingContext2D, t: number, th: Theme, h: Helpers) => void;
+  /** id of a registered extra drawing (kept when the schema is saved as JSON) */
+  drawId?: string;
 }
+
+export const EXTRA_DRAW: Record<string, NonNullable<Schema['draw']>> = {};
+
+const imgCache = new Map<string, HTMLImageElement>();
+/** decoded background image (null until loaded; the next frame draws it) */
+export function bgImage(src: string): HTMLImageElement | null {
+  let im = imgCache.get(src);
+  if (!im) {
+    im = new Image();
+    im.src = src;
+    imgCache.set(src, im);
+  }
+  return im.complete && im.naturalWidth ? im : null;
+}
+/** resolves once a background image is decoded (exports wait for it) */
+export function bgReady(src?: string) {
+  if (!src) return Promise.resolve();
+  const im = imgCache.get(src) ?? (bgImage(src), imgCache.get(src)!);
+  return im.complete ? Promise.resolve() : new Promise<void>((r) => ((im.onload = () => r()), (im.onerror = () => r())));
+}
+/** where a schema's virtual 1920×1080 space sits in a canvas */
+export function viewTransform(W: number, H: number) {
+  const k = Math.min(W / VW, H / VH);
+  return { k, ox: (W - VW * k) / 2, oy: (H - VH * k) / 2 };
+}
+let FONT = '"Segoe UI", system-ui, sans-serif';
+let TS = 1;
 
 export interface Helpers {
   ease: (x: number) => number;
@@ -108,6 +168,14 @@ export interface Helpers {
 }
 
 const ease = (x: number) => (x <= 0 ? 0 : x >= 1 ? 1 : x * x * (3 - 2 * x));
+/** ease-out with overshoot: b = 0 none … 1 strong */
+const back = (x: number, b: number) => {
+  if (x <= 0) return 0;
+  if (x >= 1) return 1;
+  const c = 1.70158 * b * 1.6;
+  const y = x - 1;
+  return 1 + (c + 1) * y * y * y + c * y * y;
+};
 const appear = (t: number, at = 0, d = 0.6) => ease((t - at) / d);
 
 function rr(g: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
@@ -310,7 +378,11 @@ export function renderSchema(g: CanvasRenderingContext2D, sc: Schema, t: number,
   g.save();
   const k = Math.min(W / VW, H / VH);
   g.setTransform(k, 0, 0, k, (W - VW * k) / 2, (H - VH * k) / 2);
+  const fx: Effects = { ...DEFAULT_FX, ...(th.fx ?? {}) };
+  FONT = `"${th.font ?? 'Segoe UI'}", system-ui, sans-serif`;
+  TS = th.textScale ?? 1;
   const acc = (i?: number) => th.accents[(i ?? 0) % th.accents.length];
+  const appearN = (at?: number) => appear(t, at ?? 0, fx.appearDur);
   const byId = new Map(sc.nodes.map((n) => [n.id, n]));
   const center = (id: string): [number, number] => {
     const n = byId.get(id)!;
@@ -319,13 +391,14 @@ export function renderSchema(g: CanvasRenderingContext2D, sc: Schema, t: number,
   const text: Helpers['text'] = (s, x, y, op = {}) => {
     g.save();
     g.globalAlpha *= op.alpha ?? 1;
-    g.font = `${op.weight ?? 500} ${op.size ?? 22}px "Segoe UI", system-ui, sans-serif`;
+    const fsz = (op.size ?? 22) * TS;
+    g.font = `${op.weight ?? 500} ${fsz}px ${FONT}`;
     g.fillStyle = op.color ?? th.text;
     g.textAlign = op.align ?? 'left';
     g.textBaseline = 'middle';
     if (op.max) {
       const lines = wrap(g, s, op.max);
-      const lh = (op.size ?? 22) * 1.25;
+      const lh = fsz * 1.25;
       lines.forEach((l, i) => g.fillText(l, x, y + (i - (lines.length - 1) / 2) * lh));
     } else g.fillText(s, x, y);
     g.restore();
@@ -334,7 +407,7 @@ export function renderSchema(g: CanvasRenderingContext2D, sc: Schema, t: number,
     g.save();
     g.globalAlpha *= op.alpha ?? 1;
     const fs = op.size ?? 17;
-    g.font = `700 ${fs}px "Segoe UI", system-ui, sans-serif`;
+    g.font = `700 ${fs}px ${FONT}`;
     const w = g.measureText(s).width + fs * 1.1;
     const h = fs * 1.7;
     rr(g, x - w / 2, y - h / 2, w, h, h / 2);
@@ -349,11 +422,26 @@ export function renderSchema(g: CanvasRenderingContext2D, sc: Schema, t: number,
   const H_: Helpers = { ease, appear, center, node: (id) => byId.get(id), text, pill };
 
   // background
-  const bg = g.createLinearGradient(0, 0, 0, VH);
-  bg.addColorStop(0, th.bg[0]);
-  bg.addColorStop(1, th.bg[1]);
-  g.fillStyle = bg;
+  if (th.bgKind === 'solid') g.fillStyle = th.bg[1];
+  else {
+    const bg = g.createLinearGradient(0, 0, 0, VH);
+    bg.addColorStop(0, th.bg[0]);
+    bg.addColorStop(1, th.bg[1]);
+    g.fillStyle = bg;
+  }
   g.fillRect(-2000, -2000, VW + 4000, VH + 4000);
+  const im = th.bgKind === 'image' && th.bgImage ? bgImage(th.bgImage) : null;
+  if (im) {
+    const s0 = th.bgFit === 'contain' ? Math.min(VW / im.naturalWidth, VH / im.naturalHeight) : Math.max(VW / im.naturalWidth, VH / im.naturalHeight);
+    const iw = im.naturalWidth * s0, ih = im.naturalHeight * s0;
+    g.drawImage(im, (VW - iw) / 2, (VH - ih) / 2, iw, ih);
+    if ((th.bgDim ?? 0) > 0) {
+      g.globalAlpha = th.bgDim ?? 0;
+      g.fillStyle = th.bg[1];
+      g.fillRect(0, 0, VW, VH);
+      g.globalAlpha = 1;
+    }
+  }
   if (th.grid) {
     g.strokeStyle = th.grid;
     g.lineWidth = 1;
@@ -382,15 +470,29 @@ export function renderSchema(g: CanvasRenderingContext2D, sc: Schema, t: number,
   }
 
   const hl = new Set<string>();
-  for (const h of sc.highlights ?? []) if (t >= h.t0 && t <= h.t1) h.ids.forEach((i) => hl.add(i));
+  const lastEnd = new Map<string, number>();
+  for (const h of sc.highlights ?? []) {
+    if (t >= h.t0 && t <= h.t1) h.ids.forEach((i) => hl.add(i));
+    else if (t > h.t1) h.ids.forEach((i) => lastEnd.set(i, Math.max(lastEnd.get(i) ?? -1e9, h.t1)));
+  }
+  /** glow level 0–1: highlighted, recently highlighted (afterglow) or newly created */
+  const glow = (n: SNode) => {
+    if (hl.has(n.id)) return 1;
+    let v = 0;
+    const e = lastEnd.get(n.id);
+    if (e !== undefined && fx.glowDur > 0) v = Math.max(v, (1 - (t - e) / fx.glowDur) * fx.glowPct);
+    const born = (n.at ?? 0) + fx.appearDur * 0.5;
+    if (t >= born && fx.glowDur > 0) v = Math.max(v, (1 - (t - born) / fx.glowDur) * fx.glowPct);
+    return Math.max(0, v);
+  };
 
   // groups first
   for (const n of sc.nodes.filter((n) => n.shape === 'group')) {
-    const a = appear(t, n.at ?? 0, 0.8);
+    const a = appearN(n.at);
     if (a <= 0) continue;
     g.save();
     g.globalAlpha = a;
-    rr(g, n.x, n.y, n.w, n.h, 22);
+    rr(g, n.x, n.y, n.w, n.h, fx.radius + 6);
     g.fillStyle = 'rgba(127,127,127,0.06)';
     g.fill();
     g.setLineDash([10, 8]);
@@ -440,7 +542,7 @@ export function renderSchema(g: CanvasRenderingContext2D, sc: Schema, t: number,
     g.restore();
   };
   for (const l of sc.links) {
-    const a = appear(t, l.at ?? 0, 0.7);
+    const a = appear(t, l.at ?? 0, fx.linkDur);
     if (a <= 0 || !byId.get(l.a) || !byId.get(l.b)) continue;
     const { pt } = geom(l);
     const col = l.c !== undefined ? acc(l.c) : th.link;
@@ -466,7 +568,7 @@ export function renderSchema(g: CanvasRenderingContext2D, sc: Schema, t: number,
     }
     if (l.label && a >= 1) {
       const [x, y] = pt(0.5);
-      g.font = '600 17px "Segoe UI", sans-serif';
+      g.font = `600 17px ${FONT}`;
       const w = g.measureText(l.label).width + 16;
       rr(g, x - w / 2, y - 14, w, 28, 8);
       g.fillStyle = th.bg[1];
@@ -479,35 +581,38 @@ export function renderSchema(g: CanvasRenderingContext2D, sc: Schema, t: number,
   // nodes
   for (const n of sc.nodes) {
     if (n.shape === 'group') continue;
-    const a = appear(t, n.at ?? 0, 0.6);
-    if (a <= 0) continue;
+    const p = Math.max(0, Math.min(1, (t - (n.at ?? 0)) / Math.max(0.05, fx.appearDur)));
+    if (p <= 0) continue;
+    const a = ease(Math.min(1, p * 1.6));
     const col = acc(n.c);
     const on = hl.has(n.id);
+    const gl = glow(n);
     g.save();
     g.globalAlpha = a;
     const cx = n.x + n.w / 2, cy = n.y + n.h / 2;
-    const sc_ = 0.85 + 0.15 * a + (on ? 0.04 * (0.5 + 0.5 * Math.sin(t * 6)) : 0);
+    const grow = fx.bounce > 0 ? back(p, fx.bounce) : ease(p);
+    const sc_ = 0.6 + 0.4 * grow + (on && fx.pulse ? 0.04 * (0.5 + 0.5 * Math.sin(t * 6)) : 0);
     g.translate(cx, cy);
     g.scale(sc_, sc_);
     g.translate(-cx, -cy);
-    if (on) {
+    if (gl > 0.01) {
       g.shadowColor = col;
-      g.shadowBlur = 36;
+      g.shadowBlur = 40 * gl;
     }
     if (n.shape === 'circle') {
       g.beginPath();
       g.arc(cx, cy, Math.min(n.w, n.h) / 2, 0, Math.PI * 2);
-    } else rr(g, n.x, n.y, n.w, n.h, n.shape === 'pill' || n.shape === 'state' ? n.h / 2 : n.shape === 'layer' ? 10 : 16);
-    g.fillStyle = on || n.shape === 'layer' ? mix(th.box, col, n.shape === 'layer' ? 0.28 : 0.22) : th.box;
+    } else rr(g, n.x, n.y, n.w, n.h, n.shape === 'pill' || n.shape === 'state' ? n.h / 2 : Math.min(fx.radius, n.shape === 'layer' ? 10 : fx.radius));
+    g.fillStyle = n.shape === 'layer' ? mix(th.box, col, 0.28) : gl > 0.01 ? mix(th.box, col, 0.22 * gl) : th.box;
     g.fill();
     g.shadowBlur = 0;
-    g.lineWidth = on ? 4 : 2.5;
-    g.strokeStyle = on ? col : n.c !== undefined ? col : th.boxLine;
+    g.lineWidth = 2.5 + 1.5 * gl;
+    g.strokeStyle = gl > 0.3 || n.c !== undefined ? col : th.boxLine;
     g.stroke();
     // accent strip
     if (n.shape !== 'circle' && n.shape !== 'pill' && n.shape !== 'state' && n.shape !== 'layer') {
       g.save();
-      rr(g, n.x, n.y, n.w, n.h, 16);
+      rr(g, n.x, n.y, n.w, n.h, fx.radius);
       g.clip();
       g.fillStyle = col;
       g.fillRect(n.x, n.y, 8, n.h);
@@ -529,11 +634,12 @@ export function renderSchema(g: CanvasRenderingContext2D, sc: Schema, t: number,
     // stack the (possibly wrapped) label and sub-label as one centred block
     const maxW = align === 'center' ? (n.shape === 'circle' ? n.w * 0.78 : n.w - 30) : n.x + n.w - tx - 14;
     const sfs = Math.round(fs * 0.72);
-    g.font = `700 ${fs}px "Segoe UI", system-ui, sans-serif`;
+    const fsT = fs * TS, sfsT = sfs * TS;
+    g.font = `700 ${fsT}px ${FONT}`;
     const nl = wrap(g, n.label, maxW).length;
-    g.font = `500 ${sfs}px "Segoe UI", system-ui, sans-serif`;
+    g.font = `500 ${sfsT}px ${FONT}`;
     const ns = n.sub ? wrap(g, n.sub, maxW).length : 0;
-    const lh = fs * 1.25, slh = sfs * 1.25, gap = ns ? fs * 0.3 : 0;
+    const lh = fsT * 1.25, slh = sfsT * 1.25, gap = ns ? fsT * 0.3 : 0;
     const blockH = nl * lh + gap + ns * slh;
     const mid = n.shape === 'circle' && n.icon ? cy + n.h * 0.1 : cy;
     const top = mid - blockH / 2;
@@ -544,7 +650,7 @@ export function renderSchema(g: CanvasRenderingContext2D, sc: Schema, t: number,
 
   // flows (packets travelling along links)
   for (const l of sc.links) {
-    if (!l.flows || appear(t, l.at ?? 0, 0.7) < 1) continue;
+    if (!l.flows || appear(t, l.at ?? 0, fx.linkDur) < 1) continue;
     const { pt } = geom(l);
     for (const f of l.flows) {
       const dur = f.dur ?? 1.6;
@@ -562,11 +668,11 @@ export function renderSchema(g: CanvasRenderingContext2D, sc: Schema, t: number,
         g.globalAlpha = fade;
         g.shadowColor = col;
         g.shadowBlur = 18;
-        if (f.label) pill(f.label, x, y, col, { size: 16 });
+        if (f.label) pill(f.label, x, y, col, { size: 16 * fx.packetScale });
         else {
           g.fillStyle = col;
           g.beginPath();
-          g.arc(x, y, 9, 0, Math.PI * 2);
+          g.arc(x, y, 9 * fx.packetScale, 0, Math.PI * 2);
           g.fill();
         }
         g.restore();
@@ -580,7 +686,7 @@ export function renderSchema(g: CanvasRenderingContext2D, sc: Schema, t: number,
     if (a <= 0) continue;
     g.save();
     g.globalAlpha = a;
-    g.font = '700 18px "Segoe UI", sans-serif';
+    g.font = `700 18px ${FONT}`;
     const w = g.measureText(b.text).width + 26;
     const x = b.align === 'left' ? b.x : b.align === 'right' ? b.x - w : b.x - w / 2;
     rr(g, x, b.y - 18, w, 36, 18);
@@ -593,7 +699,7 @@ export function renderSchema(g: CanvasRenderingContext2D, sc: Schema, t: number,
     g.restore();
   }
 
-  sc.draw?.(g, t, th, H_);
+  (sc.draw ?? (sc.drawId ? EXTRA_DRAW[sc.drawId] : undefined))?.(g, t, th, H_);
 
   // caption bar
   if (o.captions && sc.captions.length) {

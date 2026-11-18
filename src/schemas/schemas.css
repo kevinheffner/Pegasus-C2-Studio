@@ -1,39 +1,115 @@
 /* Animated Schemas: studio-style look (deep teal / ink with warm accents), distinct from C2 and IOS */
 #schApp { position: fixed; inset: 0; display: flex; flex-direction: column; background: #16232b; color: #e9eef0; font: 13px/1.4 "Segoe UI", system-ui, sans-serif; }
-#schApp button { border-radius: 8px; }
-#schApp select { margin: 0; width: auto; background: #1f323c; color: #e9eef0; border: 1px solid #355260; border-radius: 8px; padding: 4px 8px; }
+#schApp button { border-radius: 8px; font: inherit; cursor: pointer; }
+#schApp select, #schApp input[type=text], #schApp input[type=number], #schApp textarea { margin: 0; background: #1f323c; color: #e9eef0; border: 1px solid #355260; border-radius: 7px; padding: 4px 7px; font: inherit; }
+#schApp select { width: auto; }
+#schApp input[type=text], #schApp textarea { width: 100%; display: block; }
+#schApp textarea { resize: vertical; }
+#schApp label { color: #9fb7bf; font-size: 12px; margin: 6px 0; display: block; }
+#schApp label > input[type=text], #schApp label > textarea { margin-top: 3px; }
+#schApp input[type=range] { accent-color: #f2b84b; }
+#schApp .grow { flex: 1; min-width: 0; }
 #schTop { flex: none; height: 54px; display: flex; align-items: center; gap: 18px; padding: 0 18px; background: linear-gradient(90deg, #0f3b45, #17323f 60%, #2a2f45); border-bottom: 1px solid #2b4a57; }
 #schTop .sys { display: flex; align-items: center; gap: 10px; cursor: pointer; }
 .schMark { width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; background: #f2b84b; color: #16232b; font-weight: 800; font-size: 17px; }
 .schName { font: 600 17px "Segoe UI", sans-serif; }
 .schSub { color: #9fb7bf; font-size: 12px; }
-.schSel { display: flex; align-items: center; gap: 6px; margin: 0; color: #9fb7bf; font-size: 12px; white-space: nowrap; }
-.schChk { display: flex; align-items: center; gap: 6px; margin: 0; color: #e9eef0; font-size: 12px; white-space: nowrap; }
+.schProj { display: flex; gap: 6px; align-items: center; }
+#schProject { min-width: 240px; font-weight: 600; }
+.schSaved { color: #9fb7bf; font-size: 12px; }
+#schApp .schSel { display: inline-flex; align-items: center; gap: 6px; margin: 0; color: #9fb7bf; font-size: 12px; white-space: nowrap; }
+#schApp .schChk { display: inline-flex; align-items: center; gap: 6px; margin: 0; color: #e9eef0; font-size: 12px; white-space: nowrap; }
 #schBody { flex: 1; min-height: 0; display: flex; }
-#schList { flex: none; width: 330px; overflow: auto; padding: 12px; background: #13202a; border-right: 1px solid #243a46; }
-.schCat { font: 700 11px "Segoe UI", sans-serif; letter-spacing: 0.08em; text-transform: uppercase; color: #f2b84b; margin: 14px 4px 6px; }
+/* left */
+#schList { flex: none; width: 290px; overflow: auto; padding: 12px; background: #13202a; border-right: 1px solid #243a46; }
+.schCat { display: flex; align-items: center; gap: 6px; font: 700 11px "Segoe UI", sans-serif; letter-spacing: 0.08em; text-transform: uppercase; color: #f2b84b; margin: 16px 4px 6px; }
 .schCat:first-child { margin-top: 2px; }
-.schItem { display: block; width: 100%; text-align: left; margin: 0 0 6px; padding: 9px 12px; background: #1b2c36; border: 1px solid #263f4c; color: #e9eef0; }
-.schItem b { display: block; font-weight: 600; font-size: 13px; }
-.schItem span { display: block; color: #93abb3; font-size: 11.5px; margin-top: 2px; }
+.schCat .schHint { text-transform: none; letter-spacing: 0; font-weight: 400; }
+.schProjDesc { color: #93abb3; font-size: 12px; margin: 0 4px 8px; }
+.schItem2 { display: grid; grid-template-columns: 96px 1fr; gap: 8px; padding: 6px; margin-bottom: 6px; background: #1b2c36; border: 1px solid #263f4c; border-radius: 10px; cursor: pointer; position: relative; }
+.schItem2 img { width: 96px; height: 54px; border-radius: 6px; display: block; }
+.schItem2 b { display: block; font-size: 12.5px; font-weight: 600; line-height: 1.25; }
+.schItem2 span { display: block; color: #93abb3; font-size: 11px; margin-top: 3px; }
+.schItem2:hover { border-color: #4bb3c4; }
+.schItem2.on { background: #21495a; border-color: #4bb3c4; box-shadow: inset 4px 0 0 #f2b84b; }
+.schItemBtns { position: absolute; right: 4px; top: 4px; background: #1b2c36; border-radius: 6px; display: none; gap: 2px; }
+.schItem2:hover .schItemBtns, .schItem2.on .schItemBtns { display: flex; }
+.schAddRow { display: flex; gap: 6px; }
+.schAddRow .schBtn { flex: 1; }
+.schBpCat { color: #93abb3; font-size: 11px; margin: 8px 4px 4px; }
+.schItem { display: block; width: 100%; text-align: left; margin: 0 0 4px; padding: 6px 10px; background: #1b2c36; border: 1px solid #263f4c; color: #e9eef0; }
+.schItem b { font-weight: 600; font-size: 12px; }
 .schItem:hover { border-color: #4bb3c4; }
 .schItem.on { background: #21495a; border-color: #4bb3c4; box-shadow: inset 4px 0 0 #f2b84b; }
-#schMain { flex: 1; min-width: 0; display: flex; flex-direction: column; padding: 14px; gap: 10px; }
-#schStage { flex: 1; min-height: 0; display: grid; place-items: center; }
-#schCanvas { border-radius: 10px; box-shadow: 0 8px 30px rgba(0, 0, 0, 0.45); background: #000; }
+.schEdited { font-style: normal; font-size: 10px; color: #16232b; background: #f2b84b; border-radius: 999px; padding: 0 6px; margin-left: 4px; }
+/* center */
+#schMain { flex: 1; min-width: 0; display: flex; flex-direction: column; padding: 12px; gap: 8px; }
+#schEditBar { flex: none; display: flex; align-items: center; gap: 14px; padding: 6px 12px; background: #1b2c36; border: 1px solid #263f4c; border-radius: 10px; }
+#schTargetLbl { color: #c9d6da; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#schStage { flex: 1; min-height: 0; display: grid; place-items: center; position: relative; }
+#schCanvas { border-radius: 10px; box-shadow: 0 8px 30px rgba(0, 0, 0, 0.45); background: #000; outline: none; }
+#schApp.editing #schCanvas { box-shadow: 0 0 0 3px #f2b84b, 0 8px 30px rgba(0, 0, 0, 0.45); }
+.schEditHelp { position: absolute; bottom: 4px; left: 50%; transform: translateX(-50%); font-size: 11.5px; color: #16232b; background: rgba(242, 184, 75, 0.92); padding: 3px 12px; border-radius: 999px; display: none; pointer-events: none; }
+#schApp.editing .schEditHelp { display: block; }
 #schCtl { flex: none; display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: #1b2c36; border: 1px solid #263f4c; border-radius: 10px; }
-#schCtl input[type=range] { accent-color: #f2b84b; }
 #schT { color: #f2b84b; min-width: 90px; font-family: Consolas, monospace; }
-#schApp .schBtn { width: auto; flex: none; margin: 0; background: #22394a; color: #e9eef0; border: 1px solid #355260; padding: 6px 12px; font-weight: 600; }
+#schApp .schBtn { width: auto; flex: none; margin: 0; background: #22394a; color: #e9eef0; border: 1px solid #355260; padding: 5px 11px; font-weight: 600; font-size: 12px; }
 #schApp .schBtn:hover { border-color: #4bb3c4; }
+#schApp .schBtn:disabled { opacity: 0.45; cursor: default; }
 #schApp .schBtn.primary { background: #f2b84b; border-color: #f2b84b; color: #16232b; }
+#schApp .schBtn.danger { background: #5a2329; border-color: #8a3a42; color: #ffd9dc; }
+#schApp .schMini { background: transparent; border: 1px solid #355260; color: #c9d6da; padding: 0 6px; font-size: 11px; line-height: 18px; margin: 0; width: auto; }
+#schApp .schMini:hover { border-color: #f2b84b; color: #f2b84b; }
 #schPlay { min-width: 46px; }
-#schInfo { flex: none; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 16px; padding: 10px 14px; background: #1b2c36; border: 1px solid #263f4c; border-radius: 10px; }
-#schDesc { font-size: 13px; color: #e9eef0; }
-#schRefs { margin-top: 6px; color: #93abb3; font-size: 11.5px; }
-.schExpHead { font: 700 11px "Segoe UI", sans-serif; letter-spacing: 0.08em; text-transform: uppercase; color: #f2b84b; margin-bottom: 6px; }
-.schExpRow { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-#schProg { height: 4px; background: #263f4c; border-radius: 2px; margin-top: 8px; opacity: 0; transition: opacity 0.3s; }
+/* right */
+#schSide { flex: none; width: 400px; display: flex; flex-direction: column; background: #13202a; border-left: 1px solid #243a46; min-height: 0; }
+.schTabs { flex: none; display: flex; border-bottom: 1px solid #243a46; }
+#schApp .schTab { flex: 1; background: transparent; border: none; border-bottom: 3px solid transparent; border-radius: 0; color: #93abb3; padding: 10px 4px; font-weight: 600; font-size: 12px; margin: 0; }
+#schApp .schTab.on { color: #f2b84b; border-bottom-color: #f2b84b; }
+.schPanel { display: none; flex: 1; min-height: 0; overflow: auto; padding: 4px 14px 14px; }
+.schPanel.on { display: block; }
+.schHead { font: 700 11px "Segoe UI", sans-serif; letter-spacing: 0.08em; text-transform: uppercase; color: #f2b84b; margin: 14px 0 6px; }
+.schHead .schHint { text-transform: none; letter-spacing: 0; font-weight: 400; margin-left: 4px; }
+.schHead2 { font-weight: 600; color: #c9d6da; margin: 10px 0 4px; font-size: 12px; }
+.schHint { color: #7f98a1; font-size: 11.5px; }
+.schNote { color: #9fe0c0; font-size: 12px; margin-top: 6px; min-height: 16px; }
+.schRow { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+.schRow.wrap { flex-wrap: wrap; }
+.schLbl { color: #9fb7bf; font-size: 12px; }
+.schBox { background: #1b2c36; border: 1px solid #2f4b58; border-radius: 10px; padding: 4px 10px 8px; margin: 8px 0; }
+.schSw { display: flex; gap: 4px; }
+#schApp .schSw button { width: 20px; height: 20px; border-radius: 50%; border: 2px solid transparent; padding: 0; margin: 0; }
+#schApp .schSw button.on { border-color: #fff; box-shadow: 0 0 0 2px #f2b84b; }
+.schFlow { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 6px 0; border-bottom: 1px solid #263f4c; }
+#schApp .schFlow input[type=text] { width: 110px; }
+#schApp .schFlow label { display: inline-flex; align-items: center; gap: 3px; margin: 0; }
+#schApp .schFlow input[type=number] { width: 52px; }
+.schCap { display: grid; grid-template-columns: 58px 1fr auto; gap: 6px; align-items: start; margin-bottom: 6px; }
+#schApp .schCap input { width: 58px; }
+.schCapBtns { display: flex; flex-direction: column; gap: 2px; }
+.schColors { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 10px; }
+.schColors.acc { grid-template-columns: repeat(7, 1fr); }
+#schApp .schColor { display: flex; align-items: center; gap: 6px; margin: 0; }
+.schColor input[type=color] { width: 28px; height: 24px; padding: 0; border: 1px solid #355260; border-radius: 6px; background: none; cursor: pointer; }
+#schApp .schSlider { display: grid; grid-template-columns: 150px 1fr 52px; align-items: center; gap: 8px; margin: 4px 0; }
+.schSlider em { font-style: normal; color: #f2b84b; font-size: 11.5px; text-align: right; }
+#schApp .schFile { display: inline-flex; align-items: center; cursor: pointer; }
+.schBgThumb { width: 120px; height: 68px; object-fit: cover; border-radius: 6px; border: 1px solid #355260; }
+.schVsTable { width: 100%; border-collapse: collapse; font-size: 11.5px; margin: 6px 0 10px; }
+.schVsTable th { text-align: left; color: #93abb3; font-weight: 600; border-bottom: 1px solid #355260; padding: 4px; }
+.schVsTable td { padding: 4px; border-bottom: 1px solid #22394a; }
+#schProg { flex: none; height: 4px; background: #263f4c; margin: 0 14px; border-radius: 2px; opacity: 0; transition: opacity 0.3s; }
 #schBar { height: 100%; width: 0; background: #f2b84b; border-radius: 2px; }
-#schStatus { margin-top: 4px; color: #9fb7bf; font-size: 12px; min-height: 16px; }
-#schApp.busy .schExpRow button { opacity: 0.5; pointer-events: none; }
+#schStatus { flex: none; padding: 6px 14px 10px; color: #9fb7bf; font-size: 12px; min-height: 30px; }
+#schApp.busy .schPanel button { opacity: 0.5; pointer-events: none; }
+/* modal */
+.schModal { position: fixed; inset: 0; background: rgba(5, 12, 16, 0.65); display: grid; place-items: center; z-index: 50; }
+.schModal[hidden] { display: none; }
+.schModalBox { width: min(720px, 92vw); max-height: 86vh; overflow: auto; background: #1b2c36; border: 1px solid #355260; border-radius: 14px; padding: 16px 20px; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5); }
+.schModalBox h3 { margin: 0 0 10px; color: #f2b84b; font-weight: 600; }
+.schModalBtns { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+.schBpGrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+#schApp .schBpPick { display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 6px; border: 1px solid #263f4c; border-radius: 10px; cursor: pointer; color: #e9eef0; }
+.schBpPick input { display: none; }
+.schBpPick img { width: 100%; border-radius: 6px; }
+.schBpPick:has(input:checked) { border-color: #f2b84b; box-shadow: 0 0 0 2px #f2b84b; }
