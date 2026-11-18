@@ -129,6 +129,11 @@ export interface Schema {
   draw?: (g: CanvasRenderingContext2D, t: number, th: Theme, h: Helpers) => void;
   /** id of a registered extra drawing (kept when the schema is saved as JSON) */
   drawId?: string;
+  /** where it came from (prompt, blueprint <id>, manual) and the layout used */
+  source?: string;
+  layout?: 'flow' | 'cycle' | 'hub' | 'layers' | 'columns';
+  /** the decisions the generator took (shown as “How it was made”) */
+  how?: string[];
 }
 
 export const EXTRA_DRAW: Record<string, NonNullable<Schema['draw']>> = {};

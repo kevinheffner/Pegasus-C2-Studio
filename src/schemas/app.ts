@@ -10,6 +10,7 @@ import {
   generateFromPrompt, spread, clone, uid, slug, PROMPT_EXAMPLES, type SchemaProject, type SchemaItem, type Blueprint, type LayoutKind,
 } from './model';
 import { buildVsPackage } from './vspackage';
+import { scriptFromSchema, schemaFromScript, applyCommands, arrange, looksLikeCommands } from './script';
 import { createEncoder } from '../export/recorder';
 import { saveOutput } from '../export/save';
 import './schemas.css';
@@ -121,7 +122,10 @@ export async function initSchemas() {
     undo.push(JSON.stringify(schema()));
     if (undo.length > 60) undo.shift();
   };
-  const changed = () => dirty('schema');
+  const changed = () => {
+    dirty('schema');
+    refreshScript();
+  };
 
   // ------------------------------------------------------------------ projects
   async function refreshProjects(selectId?: string) {
@@ -583,23 +587,61 @@ export async function initSchemas() {
   };
   root.querySelectorAll<HTMLButtonElement>('.schTab').forEach((b) => (b.onclick = () => tab(Number(b.dataset.tab))));
 
-  // ------------------------------------------------------------------ Prompt panel
+  // ------------------------------------------------------------------ Prompt panel (prompt, how it was made, instructions)
+  let scriptDirty = false;
+  const refreshScript = () => {
+    const el = document.getElementById('ppScript') as HTMLTextAreaElement | null;
+    if (el && !scriptDirty) el.value = scriptFromSchema(schema());
+    const how = document.getElementById('ppHow');
+    if (how) how.innerHTML = howHtml();
+  };
+  const howHtml = () => {
+    const sc = schema();
+    const list = sc.how?.length ? sc.how : ['No record of how this item was made (made by hand or before instructions were kept).'];
+    return `<div class="schHint">Source: <b>${esc(sc.source ?? 'manual')}</b>${sc.layout ? ` · layout <b>${esc(sc.layout)}</b>` : ''}</div><ol class="schHow">${list.map((h) => `<li>${esc(h)}</li>`).join('')}</ol>`;
+  };
+  const replaceSchema = (next: Schema, note: string) => {
+    snapshot();
+    next.id = schema().id;
+    next.how = [...(schema().how ?? []), note].slice(-30);
+    if (target.kind === 'item') item()!.schema = next;
+    else target.bp.schema = next;
+    sel = null;
+    $<HTMLInputElement>('schTime').max = String(next.duration);
+    if (t > next.duration) t = 0;
+    changed();
+    renderText();
+    renderVs();
+  };
   function renderPrompt() {
     const p = $('pPrompt');
+    scriptDirty = false;
     p.innerHTML = `
-      <div class="schHead">Describe the image or animation</div>
-      <textarea id="ppText" rows="9" placeholder="What should it show, for whom, and what is the message?\n\nFree text works (e.g. “Show how C2SIM connects national C2 systems and simulations”). For full control use lines like:\nTitle: …\nLayout: flow | cycle | hub | layers | columns\n- Element: short description\nA -> B : label\nGroup: name\nNarration: one sentence per line\nMessage: the takeaway">${esc(item()?.prompt ?? '')}</textarea>
+      <div class="schHead">Prompt</div>
+      <textarea id="ppText" rows="7" placeholder="Describe a new image or animation, or ask for changes to this one.\n\nNew: free text, or lines like Title: … / Layout: flow | cycle | hub | layers | columns / - Element: description / A -> B : label / Group: name / Narration: … / Message: …\n\nChanges (Apply as changes): rename A to B · add X after A · remove X · link A to B : label · make it a cycle · narration 2: new text · add narration: … · colour X red · icon X server · move X left 100 · make X bigger · make it 40 s · slower">${esc(item()?.prompt ?? '')}</textarea>
       <div class="schRow"><label class="schSel">Layout <select id="ppLayout">${['auto', 'flow', 'cycle', 'hub', 'layers', 'columns'].map((l) => `<option>${l}</option>`).join('')}</select></label>
-      <label class="schSel">Length <input type="number" id="ppDur" min="8" max="180" placeholder="auto" style="width:70px"> s</label></div>
-      <div class="schRow"><select id="ppEx"><option value="">Example prompts…</option>${PROMPT_EXAMPLES.map(([n], i) => `<option value="${i}">${esc(n)}</option>`).join('')}</select></div>
-      <div class="schRow wrap"><button class="schBtn primary" id="ppNew">＋ New item from prompt</button><button class="schBtn" id="ppReplace" ${target.kind === 'item' ? '' : 'disabled'}>↻ Replace this item</button></div>
+      <label class="schSel">Length <input type="number" id="ppDur" min="8" max="180" placeholder="auto" style="width:70px"> s</label>
+      <select id="ppEx"><option value="">Examples…</option>${PROMPT_EXAMPLES.map(([n], i) => `<option value="${i}">${esc(n)}</option>`).join('')}<option value="cmd">Change commands (example)</option></select></div>
+      <div class="schRow wrap"><button class="schBtn primary" id="ppNew">＋ New item</button><button class="schBtn" id="ppReplace" ${target.kind === 'item' ? '' : 'disabled'} title="Regenerate this item from the prompt">↻ Replace this item</button><button class="schBtn" id="ppChange" title="Apply the prompt as change commands to this item">✎ Apply as changes</button></div>
       <div id="ppNote" class="schNote"></div>
+      <div class="schHead">How this item was made</div>
+      <div id="ppHow">${howHtml()}</div>
+      <div class="schHead">Instructions <span class="schHint">the full recipe of this ${target.kind === 'item' ? 'item' : 'blueprint'}: edit it and apply</span></div>
+      <textarea id="ppScript" class="schScript" rows="16" spellcheck="false"></textarea>
+      <div class="schRow wrap"><button class="schBtn primary" id="ppApply">▶ Apply instructions</button><button class="schBtn" id="ppRevert">↺ Revert</button><button class="schBtn" id="ppCopy">⧉ Copy</button><button class="schBtn" id="ppRelayout" title="Remove all positions and arrange the elements again with the layout">⊞ Re-arrange</button><span id="ppScriptState" class="schHint"></span></div>
+      <div id="ppScriptMsg" class="schNote"></div>
       <div class="schHead">Project</div>
-      <div class="schHint">The project prompt describes the overall content and messaging; new items start from it when the box above is empty.</div>
-      <textarea id="ppProject" rows="3" placeholder="Overall content, audience and message of this project">${esc(P.prompt)}</textarea>
-      <div class="schHint">Generation runs locally from your text and the blueprint library; no AI service or key is used.</div>`;
+      <textarea id="ppProject" rows="2" placeholder="Overall content, audience and message of this project (used when the prompt above is empty)">${esc(P.prompt)}</textarea>
+      <div class="schHint">Generation and changes run locally from your text and the blueprint library; no AI service or key is used.</div>`;
+    refreshScript();
+    const ta = $<HTMLTextAreaElement>('ppScript');
+    ta.oninput = () => {
+      scriptDirty = true;
+      $('ppScriptState').textContent = 'edited: not applied yet';
+    };
     $<HTMLSelectElement>('ppEx').onchange = () => {
-      const ex = PROMPT_EXAMPLES[Number($<HTMLSelectElement>('ppEx').value)];
+      const v = $<HTMLSelectElement>('ppEx').value;
+      const ex = v === 'cmd' ? ['', `rename ${schema().nodes.find((n) => n.shape !== 'group')?.label ?? 'A'} to New name\nadd Data logger: records everything after ${schema().nodes.filter((n) => n.shape !== 'group').at(-1)?.label ?? 'A'}\nnarration 1: A clearer opening sentence.\nmake it slower`] : PROMPT_EXAMPLES[Number(v)];
       if (ex) $<HTMLTextAreaElement>('ppText').value = ex[1];
     };
     $<HTMLTextAreaElement>('ppProject').onchange = () => {
@@ -613,6 +655,8 @@ export async function initSchemas() {
       return { text, ...generateFromPrompt(text, { layout: $<HTMLSelectElement>('ppLayout').value as LayoutKind, duration: d, blueprints }) };
     };
     $('ppNew').onclick = () => {
+      const text = $<HTMLTextAreaElement>('ppText').value.trim();
+      if (text && looksLikeCommands(text) && !confirm('This prompt looks like change commands. Create a new item from it anyway? (Cancel, then use “Apply as changes” to change this item.)')) return;
       const r = gen();
       if (!r) return ($('ppNote').textContent = 'Write a prompt first.');
       P.items.push(newItem(r.schema, r.text));
@@ -624,12 +668,58 @@ export async function initSchemas() {
     $('ppReplace').onclick = () => {
       const r = gen();
       if (!r || target.kind !== 'item') return;
-      if (!confirm('Replace the content of this item? (Its style and Video Studio settings are kept.)')) return;
+      if (!confirm('Replace the content of this item? (Its style and Video Studio settings are kept; Ctrl+Z in Edit layout undoes.)')) return;
+      snapshot();
       item()!.schema = r.schema;
       item()!.prompt = r.text;
       dirty();
+      const keepUndo = undo.slice();
       select();
+      undo.push(...keepUndo);
       $('ppNote').textContent = r.note;
+    };
+    $('ppChange').onclick = () => {
+      const text = $<HTMLTextAreaElement>('ppText').value.trim();
+      if (!text) return ($('ppNote').textContent = 'Write the changes first, one per line (see the examples).');
+      const next = clone(schema());
+      const r = applyCommands(next, text);
+      if (!r.applied.length) {
+        $('ppNote').innerHTML = `<span class="schWarn">No change understood.</span> ${r.unknown.length ? `Not understood: ${r.unknown.map(esc).join('; ')}.` : ''} To describe a new diagram, use <b>New item</b> or <b>Replace this item</b>.`;
+        return;
+      }
+      replaceSchema(next, `Changes requested: ${r.applied.join('; ')}.`);
+      if (target.kind === 'item') item()!.prompt = text;
+      $('ppNote').innerHTML = `Applied: ${r.applied.map(esc).join(' · ')}${r.unknown.length ? `<br><span class="schWarn">Not understood: ${r.unknown.map(esc).join('; ')}</span>` : ''}`;
+    };
+    $('ppApply').onclick = () => {
+      const r = schemaFromScript(ta.value, schema());
+      const msg = $('ppScriptMsg');
+      if (!r.schema) {
+        msg.innerHTML = `<span class="schWarn">Not applied:</span><ul>${r.errors.map((e) => `<li>${esc(e)}</li>`).join('')}</ul>`;
+        return;
+      }
+      r.schema.source = r.schema.source && r.schema.source !== 'manual' ? r.schema.source : 'instructions';
+      scriptDirty = false;
+      replaceSchema(r.schema, `Instructions edited and applied (${new Date().toLocaleString().slice(0, 17)}).`);
+      $('ppScriptState').textContent = 'applied';
+      msg.innerHTML = r.warnings.length ? `<span class="schWarn">Applied with warnings:</span><ul>${r.warnings.map((e) => `<li>${esc(e)}</li>`).join('')}</ul>` : 'Applied.';
+    };
+    $('ppRevert').onclick = () => {
+      scriptDirty = false;
+      refreshScript();
+      $('ppScriptState').textContent = '';
+      $('ppScriptMsg').textContent = '';
+    };
+    $('ppCopy').onclick = async () => {
+      await navigator.clipboard?.writeText(ta.value).catch(() => undefined);
+      $('ppScriptState').textContent = 'copied';
+    };
+    $('ppRelayout').onclick = () => {
+      const lay = (($<HTMLSelectElement>('ppLayout').value === 'auto' ? schema().layout : $<HTMLSelectElement>('ppLayout').value) ?? 'flow') as Schema['layout'];
+      const next = clone(schema());
+      next.layout = lay;
+      arrange(next, undefined, lay!);
+      replaceSchema(next, `Re-arranged as ${lay}.`);
     };
   }
 

@@ -51,7 +51,12 @@ export function newProject(name: string, description = '', prompt = ''): SchemaP
   return { format: 'pegasus-schema-project', version: 1, id: `${slug(name)}-${uid().slice(0, 5)}`, name, description, prompt, style: clone(THEMES[0]), items: [], created: now, updated: now };
 }
 export function newItem(schema: Schema, prompt = ''): SchemaItem {
-  return { id: uid(), kind: 'animation', schema: clone(schema), style: null, prompt, vs: { scene: '', section: '', mode: 'append', narration: null } };
+  const s = clone(schema);
+  if (!s.source) {
+    s.source = `blueprint ${s.id}`;
+    s.how = [`Copied from the blueprint “${s.title}” (${s.category}).`];
+  }
+  return { id: uid(), kind: 'animation', schema: s, style: null, prompt, vs: { scene: '', section: '', mode: 'append', narration: null } };
 }
 /** the effective style of an item */
 export const styleOf = (p: SchemaProject, it: SchemaItem | null): Theme => {
@@ -255,6 +260,15 @@ export function generateFromPrompt(prompt: string, o: { layout: LayoutKind; dura
     if (bp) {
       const s = clone(bp.schema);
       s.id = `${topic}-${uid().slice(0, 4)}`;
+      const hit = prompt.match(TOPICS.find(([, id]) => id === topic)![0])?.[0] ?? topic;
+      s.source = `blueprint ${topic} (from a prompt)`;
+      s.how = [
+        `Recognised the topic “${hit}” in the prompt, so the item starts from the blueprint “${bp.schema.title}”${bp.edited ? ' (your edited copy)' : ''}.`,
+        P.title ? `Title taken from your Title line.` : `Title kept from the blueprint.`,
+        P.narration.length ? `Narration: your ${P.narration.length} Narration line(s), spread evenly over ${s.duration} s.` : `Narration kept from the blueprint (${s.captions.length} lines).`,
+        ...(P.message ? [`Your Message line is added as the last narration line.`] : []),
+        `To build a different diagram instead, list elements (“- name: description”) or arrows (“A -> B”) in the prompt.`,
+      ];
       if (P.title) s.title = P.title;
       if (P.subtitle) s.subtitle = P.subtitle;
       if (P.narration.length) s.captions = spread(P.narration, s.duration);
@@ -262,12 +276,28 @@ export function generateFromPrompt(prompt: string, o: { layout: LayoutKind; dura
       return { schema: s, note: `Started from the “${bp.schema.title}” blueprint${P.narration.length ? ' with your narration' : ''}. Edit the texts, layout and narration as needed.` };
     }
   }
+  const how: string[] = [];
   let items = P.items;
-  if (items.length < 2) items = ['Input', 'Process', 'Output'].map((label) => ({ label, sub: '' }));
+  const listed = prompt.split(/\r?\n/).some((l) => /^\s*(?:[-*•]|\d+[.)]|items?\s*:|boxes\s*:|steps\s*:|layers\s*:)/i.test(l) || /->|→|=>/.test(l));
+  if (items.length >= 2) how.push(listed ? `Elements: the ${items.length} you listed (${items.map((i) => i.label).join(', ')}).` : `Elements: found the list “${items.map((i) => i.label).join(', ')}” in your text.`);
+  if (items.length < 2) {
+    items = ['Input', 'Process', 'Output'].map((label) => ({ label, sub: '' }));
+    how.push('No topic or list of elements was found, so three placeholder elements (Input, Process, Output) were used: rename them or list your own elements.');
+  }
+  if (P.items.length > 12) how.push(`Only the first 12 of ${P.items.length} elements are used.`);
   items = items.slice(0, 12);
   const words = `${prompt}`.toLowerCase();
   let layout: LayoutKind = P.layout ?? o.layout;
-  if (layout === 'auto') layout = items.some((i) => i.group) ? 'columns' : /cycle|loop|iterat|repeat|continuous/.test(words) ? 'cycle' : /layer|level|stack|tier/.test(words) ? 'layers' : /hub|central|server|bus|connect|around|joins?/.test(words) ? 'hub' : 'flow';
+  if (P.layout) how.push(`Layout: ${P.layout}, from your Layout line.`);
+  else if (o.layout !== 'auto') how.push(`Layout: ${o.layout}, chosen in the Layout menu.`);
+  if (layout === 'auto') {
+    const why = (re: RegExp) => words.match(re)?.[0];
+    if (items.some((i) => i.group)) (layout = 'columns'), how.push('Layout: columns, because the prompt has Group lines.');
+    else if (why(/cycle|loop|iterat\w*|repeat\w*|continuous/)) how.push(`Layout: cycle, because the prompt says “${why(/cycle|loop|iterat\w*|repeat\w*|continuous/)}”.`), (layout = 'cycle');
+    else if (why(/layer\w*|level\w*|stack\w*|tier\w*/)) how.push(`Layout: layers, because the prompt says “${why(/layer\w*|level\w*|stack\w*|tier\w*/)}”.`), (layout = 'layers');
+    else if (why(/hub|central|server|bus|connect\w*|around|joins?/)) how.push(`Layout: hub, because the prompt says “${why(/hub|central|server|bus|connect\w*|around|joins?/)}” (the first element is the centre).`), (layout = 'hub');
+    else (layout = 'flow'), how.push('Layout: flow (left to right), the default when no other layout is suggested.');
+  }
   const n = items.length;
   const dt = Math.max(1.2, Math.min(3, 18 / n));
   const nodes: SNode[] = [];
@@ -324,6 +354,8 @@ export function generateFromPrompt(prompt: string, o: { layout: LayoutKind; dura
       if (a !== 'n-1' && b !== 'n-1') links.push({ a, b, label: l.label, at: 1.5 + k * dt });
     });
   }
+  how.push(P.links.length ? `Links: your ${P.links.length} arrow(s).` : layout === 'hub' ? 'Links: every element to the centre, both ways.' : layout === 'flow' || layout === 'cycle' ? `Links: each element to the next${layout === 'cycle' ? ', closing the loop' : ''}.` : 'Links: none (add arrows “A -> B” to link elements).');
+  how.push(`Icons chosen from keywords: ${nodes.filter((x) => x.icon && x.shape !== 'group').map((x) => `${x.label} → ${x.icon}`).join(', ') || 'none'}.`);
   const built = 1 + n * dt + 1;
   links.forEach((l, k) => (l.flows = [{ label: l.label && l.label.length < 14 ? l.label.toUpperCase() : undefined, c: k % 7, t0: built + k * 0.7, every: 3 + (k % 3) * 0.5 }]));
   const duration = P.duration ?? o.duration ?? Math.round(Math.max(20, built + 14));
@@ -336,6 +368,8 @@ export function generateFromPrompt(prompt: string, o: { layout: LayoutKind; dura
     sents.slice(1, 3).forEach((s) => capText.push(s));
     if (P.message) capText.push(P.message);
   }
+  how.push(`Timing: one element every ${Math.round(dt * 10) / 10} s from 1 s, messages start at ${Math.round(built * 10) / 10} s; length ${duration} s${P.duration ? ' (your Duration line)' : o.duration ? ' (Length field)' : ''}.`);
+  how.push(P.narration.length ? `Narration: your ${P.narration.length} Narration line(s), spread evenly.` : `Narration made from the first sentence of the prompt and the element descriptions${P.message ? ', ending with your Message' : ''}: rewrite it in the Text tab or in the instructions.`);
   const captions = spread(capText.slice(0, 9), duration);
   const highlights = captions.map((c, i) => {
     const t1 = captions[i + 1]?.t ?? duration;
@@ -348,12 +382,15 @@ export function generateFromPrompt(prompt: string, o: { layout: LayoutKind; dura
     title,
     subtitle: P.subtitle ?? (sents[1] ?? '').slice(0, 110),
     duration,
-    description: prompt.slice(0, 300),
+    description: (P.message ?? sents[0] ?? title).slice(0, 200),
     refs: [],
     nodes,
     links,
     captions,
     highlights,
+    source: 'prompt',
+    layout: layout as Schema['layout'],
+    how: [...how, `Highlights: elements are highlighted while a narration line names them (${highlights.length} step(s)).`],
   };
   return { schema, note: `Built a ${layout} layout with ${n} elements${P.links.length ? ` and ${links.length} links from your arrows` : ''}. Drag the boxes in Edit mode, and edit the texts and narration in the Text tab.` };
 }
