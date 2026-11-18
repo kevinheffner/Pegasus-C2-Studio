@@ -197,7 +197,7 @@ label.file input { margin-top: 4px; color: var(--muted); width: 100%; }
 .homeInner { width: min(1240px, 94vw); text-align: center; }
 .homeBrand { font: 700 22px Consolas, monospace; letter-spacing: 0.16em; color: #cfe6ff; }
 .homeSub { color: var(--muted); margin: 8px 0 34px; }
-.homeCards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+.homeCards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
 @media (max-width: 1200px) { .homeCards { grid-template-columns: repeat(2, 1fr); } }
 .homeCard { text-align: left; padding: 26px 24px; background: linear-gradient(#152230, #101a24); border: 1px solid #284461; border-radius: 10px; transition: transform 0.12s, border-color 0.12s; }
 .homeCard:hover { transform: translateY(-3px); border-color: var(--accent); box-shadow: 0 10px 40px rgba(61,156,240,0.18); }

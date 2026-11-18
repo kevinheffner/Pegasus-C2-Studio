@@ -18,6 +18,7 @@ import { SensorView } from '../app/sensorview';
 import { dtg } from '../render/hud';
 import { toMgrs } from '../geo/geo';
 import { saveOutput } from '../export/save';
+import { createViews } from './views';
 import './ios.css';
 
 type MelStatus = 'pending' | 'armed' | 'fired' | 'skipped';
@@ -132,8 +133,9 @@ export async function initIOS() {
   </header>
   <div id="iosMonitors">
     <section class="monitor" id="mon1">
-      <div class="monLabel">Session control<small>Monitor 1</small></div>
-      <div class="m1grid">
+      <div class="monLabel"><select class="monView" id="monView1"></select><small>Monitor 1</small></div>
+      <div class="monBody" id="monBody1">
+      <div class="m1grid vgrid" id="vw-control">
         <div class="pane melPane">
           <div class="paneHead">Master event list <span class="paneSub" id="melCount"></span>
             <span class="grow"></span><span class="chips" id="melFilter"><button data-k="all" class="on">All</button><button data-k="pending">Upcoming</button><button data-k="fired">Done</button></span></div>
@@ -160,10 +162,12 @@ export async function initIOS() {
           </div>
         </div>
       </div>
+      </div>
     </section>
     <section class="monitor" id="mon2">
-      <div class="monLabel">Learner overview<small>Monitor 2</small></div>
-      <div class="m2grid">
+      <div class="monLabel"><select class="monView" id="monView2"></select><small>Monitor 2</small></div>
+      <div class="monBody" id="monBody2">
+      <div class="m2grid vgrid" id="vw-learners">
         <div class="pane rep" data-rep="0"><div class="paneHead">Learner 1 · UAV operator <span class="paneSub">EO/IR feed</span></div><div class="repBody" id="rep0"></div></div>
         <div class="pane rep" data-rep="1"><div class="paneHead">Learner 2 · Air defence <span class="paneSub">radar scope</span></div><div class="repBody" id="rep1"></div></div>
         <div class="pane rep" data-rep="2"><div class="paneHead">Learner 3 · EW operator <span class="paneSub">ESM display</span></div><div class="repBody" id="rep2"></div></div>
@@ -172,8 +176,10 @@ export async function initIOS() {
         <div class="pane objPane"><div class="paneHead">Learning objectives</div><div id="iosObj" class="objs"></div></div>
         <div class="pane tlPane"><div class="paneHead">Session timeline</div><canvas id="iosTl"></canvas></div>
       </div>
+      </div>
     </section>
-  </div>`;
+  </div>
+  <div id="iosViewStore" style="display:none"></div>`;
   document.body.appendChild(root);
   const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -231,6 +237,7 @@ export async function initIOS() {
   // ---------- mission ----------
   const missions = BUILTIN_PACKAGES.filter((p) => !p.workspace.multiAO);
   $<HTMLSelectElement>('iosMission').innerHTML = ((window as any).scc?.active?.scenario ? '<option value="cop">Current COP mission</option>' : '') + missions.map((p, i) => `<option value="${i}">${p.name}</option>`).join('');
+  let extReset = () => {};
   async function loadMission() {
     const v = $<HTMLSelectElement>('iosMission').value;
     let s: Scenario | null = v === 'cop' ? (window as any).scc?.active?.scenario ?? null : null;
@@ -241,6 +248,7 @@ export async function initIOS() {
     journal = [{ t: 0, who: 'IOS', text: `Session opened · ${s.meta.title ?? s.meta.name}`, cls: 'sys' }];
     effects.clear();
     t = 0;
+    extReset();
     $<HTMLInputElement>('iosTime').max = String(s.meta.durationMin);
     $('iosEx').textContent = (s.meta.title ?? s.meta.name).replace(/^OP /, 'OP ');
     godMap.setScenario(s);
@@ -423,6 +431,7 @@ export async function initIOS() {
       renderMel();
       renderJournal();
       renderOverview(st);
+      ext.render();
       renderEffects();
     }
     const start = new Date(sc.meta.start).getTime();
@@ -521,6 +530,46 @@ export async function initIOS() {
     renderAll(true);
   };
 
+  // ---------- views per monitor ----------
+  const ext = createViews({
+    sc: () => sc,
+    sim: () => sim,
+    t: () => t,
+    setTime: (x) => ((t = x), (playing = false), catchUp(), renderAll(true)),
+    mel: () => mel,
+    notes: () => journal,
+    addNote: (who, text, cls) => (journal.push({ t, who, text, cls }), broadcast()),
+  });
+  const VIEWS: [string, string, HTMLElement][] = [
+    ['control', 'Session control', $('vw-control')],
+    ['learners', 'Learner overview', $('vw-learners')],
+    ['obs', 'Observer / evaluator', ext.views.obs],
+    ['aar', 'After-action review', ext.views.aar],
+    ['life', 'Exercise lifecycle', ext.views.life],
+  ];
+  extReset = () => ext.reset();
+  const shown: Record<'1' | '2', string> = { '1': 'control', '2': 'learners' };
+  function showViews() {
+    const store = $('iosViewStore');
+    for (const [, , el] of VIEWS) store.appendChild(el);
+    for (const m of ['1', '2'] as const) {
+      $('monBody' + m).appendChild(VIEWS.find((v) => v[0] === shown[m])![2]);
+      const s = $<HTMLSelectElement>('monView' + m);
+      s.innerHTML = VIEWS.map(([id, name]) => `<option value="${id}">${name}</option>`).join('');
+      s.value = shown[m];
+    }
+    setTimeout(() => (godMap.map.resize(), copMap.map.resize(), ext.render(true)), 50);
+  }
+  for (const m of ['1', '2'] as const)
+    $<HTMLSelectElement>('monView' + m).onchange = () => {
+      const v = $<HTMLSelectElement>('monView' + m).value;
+      const o = m === '1' ? '2' : '1';
+      if (shown[o] === v) shown[o] = shown[m]; // swap when the other monitor already shows it
+      shown[m] = v;
+      showViews();
+    };
+  showViews();
+
   // ---------- monitors ----------
   const applyMon = () => {
     const two = $<HTMLSelectElement>('iosMon').value === '2';
@@ -583,6 +632,7 @@ export async function initIOS() {
       renderAll(true);
     },
     mel: () => mel,
+    view: (m: '1' | '2', v: string) => ((shown[m] = v), showViews()),
     freeze: () => ((playing = false), renderAll(true)),
     get ready() {
       return !!sc;
@@ -590,7 +640,6 @@ export async function initIOS() {
   };
 
   applyMon();
-  if (follower) root.querySelector('#mon1')!.remove();
   await loadMission();
   requestAnimationFrame(loop);
   void toMgrs;

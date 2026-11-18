@@ -13,6 +13,7 @@
     "@armyc2.c5isr.renderer/mil-sym-ts-web": "^2.10.11",
     "@mapbox/vector-tile": "^3.0.0",
     "cesium": "^1.147.0",
+    "gifenc": "^1.0.3",
     "maplibre-contour": "^0.1.1",
     "maplibre-gl": "^5.24.1",
     "milsymbol": "^3.0.5",

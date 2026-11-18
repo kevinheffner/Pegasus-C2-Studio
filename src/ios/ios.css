@@ -146,3 +146,78 @@ tr.mel.skipped { opacity: 0.45; }
 .objs { background: #fbf1ea; }
 .obj { border-color: #f0dccf; }
 .tlPane { background: #f5f2fb; }
+
+/* ---- monitor view selector + extra views ---- */
+.monLabel { display: flex; align-items: center; gap: 10px; }
+#iosApp .monView { margin: 0; width: auto; font: 600 15px "Segoe UI", sans-serif; color: #3d3a5c; background: transparent; border: 1px solid transparent; padding: 2px 6px; cursor: pointer; }
+#iosApp .monView:hover { border-color: #cfc7ea; background: #f3effa; }
+.monBody { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.vgrid { flex: 1; min-height: 0; display: grid; gap: 12px; }
+#iosApp.follower #mon1 { display: none; }
+.muted { color: var(--i-muted); }
+/* observer / evaluator */
+.obsGrid { grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(0, 0.9fr); grid-template-areas: "tasks cards" "rt log"; }
+.obsTasks { grid-area: tasks; } .obsCards { grid-area: cards; } .obsRt { grid-area: rt; } .obsLog { grid-area: log; }
+.obsTasks .paneHead, .obsCards .paneHead { background: #e3def3; border-color: #cfc7ea; color: #3d3a8c; }
+.obsRt .paneHead { background: #d6ebe5; border-color: #bcdcd3; color: #1f665c; }
+.obsLog .paneHead { background: #f3e3c3; border-color: #e5cfa3; color: #7a5310; }
+.obsTable { flex: 1; overflow: auto; }
+.obsTable table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.obsTable th { position: sticky; top: 0; background: #ece7f7; color: #5c5785; font: 600 11px "Segoe UI", sans-serif; text-align: left; padding: 6px 10px; }
+.obsTable td { padding: 8px 10px; border-bottom: 1px solid #eae2d2; }
+.obsTable tr:nth-child(even) td { background: #f3eee3; }
+.rate { font: 600 11px "Segoe UI", sans-serif; padding: 2px 10px; border-radius: 999px; background: #eee; color: #777; white-space: nowrap; }
+.rate.rT { background: #ccfbf1; color: #0f766e; } .rate.rP { background: #fef3c7; color: #b45309; } .rate.rU { background: #fee2e2; color: #b91c1c; }
+.cards { flex: 1; overflow: auto; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 10px; align-content: start; background: #f5f2fb; }
+.card { background: #fff; border-radius: 10px; padding: 10px 12px; border: 1px solid #e3def3; }
+.cardName { font-weight: 600; font-size: 14px; } .cardSub { color: var(--i-muted); font-size: 11px; }
+.card .bar { height: 8px; border-radius: 4px; background: #ece7f7; margin: 8px 0 6px; overflow: hidden; }
+.card .bar i { display: block; height: 100%; background: linear-gradient(90deg, #4f46e5, #0e9f8e); }
+.cardRow { display: flex; justify-content: space-between; font-size: 12px; color: var(--i-muted); }
+.obsRt canvas { flex: 1; margin: 10px 12px; min-height: 0; }
+.obsList { flex: 1; overflow: auto; padding: 6px 12px; background: #fbf6ea; font-size: 12px; }
+.ob { padding: 5px 0; border-bottom: 1px solid #efe5d0; } .ob .mono { color: var(--i-muted); font-size: 11px; margin-right: 6px; }
+.ob.sustain b { color: #0f766e; } .ob.improve b { color: #b45309; } .ob b { margin-right: 6px; }
+.obsAdd { display: flex; gap: 6px; padding: 8px 10px; background: #f3e9d4; border-top: 1px solid #e5cfa3; }
+#iosApp .obsAdd select, #iosApp .obsAdd input { margin: 0; padding: 4px 8px; font-size: 12px; }
+#iosApp .obsAdd select { width: auto; } #iosApp .obsAdd input { flex: 1; }
+#iosApp .obsAdd button { padding: 4px 10px; font-size: 12px; white-space: nowrap; }
+#iosApp .obsPlus { color: #0f766e; } #iosApp .obsMinus { color: #b45309; }
+/* after-action review */
+.aarGrid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 0.8fr); grid-template-rows: minmax(0, 1.1fr) minmax(0, 0.7fr) minmax(0, 0.7fr); grid-template-areas: "chart chart key" "q1 q2 key" "q3 q4 key"; }
+.aarChart { grid-area: chart; } .aarKey { grid-area: key; } .q1 { grid-area: q1; } .q2 { grid-area: q2; } .q3 { grid-area: q3; } .q4 { grid-area: q4; }
+.aarChart .paneHead { background: #d9e6f2; border-color: #c0d4e8; color: #285580; }
+.aarKey .paneHead { background: #e3def3; border-color: #cfc7ea; color: #3d3a8c; }
+.q1 .paneHead { background: #e3def3; color: #3d3a8c; } .q2 .paneHead { background: #d9e6f2; color: #285580; }
+.q3 .paneHead { background: #f6dccf; color: #8a3f1c; } .q4 .paneHead { background: #d6ebe5; color: #1f665c; }
+.aarChart canvas { flex: 1; margin: 10px 12px; min-height: 0; cursor: pointer; }
+.keyList { flex: 1; overflow: auto; padding: 8px; display: flex; flex-direction: column; gap: 6px; background: #f5f2fb; }
+#iosApp .key { text-align: left; padding: 8px 10px; font-size: 12px; background: #fff; border: 1px solid #e3def3; opacity: 0.6; }
+#iosApp .key.past { opacity: 1; border-left: 4px solid #4f46e5; }
+.key .mono { display: block; color: #4f46e5; font-size: 11px; font-weight: 600; }
+.qBody { flex: 1; overflow: auto; padding: 6px 14px; font-size: 12.5px; }
+.qBody ul { margin: 4px 0; padding-left: 18px; } .qBody li { margin: 3px 0; } .qBody p { margin: 4px 0; }
+/* exercise lifecycle */
+.lifeGrid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); grid-template-areas: "st st st" "sys roles lib"; }
+.lifeStages { grid-area: st; } .lifeSys { grid-area: sys; } .lifeRoles { grid-area: roles; } .lifeLib { grid-area: lib; }
+.lifeStages .paneHead { background: #e3def3; color: #3d3a8c; } .lifeSys .paneHead { background: #d6ebe5; color: #1f665c; }
+.lifeRoles .paneHead { background: #f3e3c3; color: #7a5310; } .lifeLib .paneHead { background: #d9e6f2; color: #285580; }
+.stages { display: flex; align-items: stretch; gap: 6px; padding: 14px; background: #f5f2fb; }
+.stage { flex: 1; background: #fff; border: 2px solid #e3def3; border-radius: 12px; padding: 10px 12px; opacity: 0.75; }
+.stage.done { border-color: #99d5c9; background: #eefaf6; opacity: 1; }
+.stage.cur { border-color: #4f46e5; background: #eeedff; opacity: 1; box-shadow: 0 0 0 4px rgba(79, 70, 229, 0.12); }
+.stNum { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; background: #e3def3; color: #3d3a8c; font-weight: 700; }
+.stage.done .stNum { background: #0e9f8e; color: #fff; } .stage.cur .stNum { background: #4f46e5; color: #fff; }
+.stName { font-weight: 700; font-size: 15px; margin-top: 6px; } .stSub { color: var(--i-muted); font-size: 11.5px; }
+.stage ul { margin: 6px 0 0; padding-left: 16px; font-size: 11.5px; color: #4b5060; }
+.stArrow { align-self: center; color: #a39cc9; font-size: 20px; }
+.sysList, .roles, .lib { flex: 1; overflow: auto; padding: 8px 12px; }
+.sysList { background: #eef6f3; } .roles { background: #fbf6ea; } .lib { background: #eef3f9; }
+.sys { display: grid; grid-template-columns: 14px 1fr; column-gap: 8px; padding: 7px 0; border-bottom: 1px solid #d5e8e1; }
+.sys i { grid-row: span 2; width: 10px; height: 10px; border-radius: 50%; margin-top: 4px; background: #0e9f8e; box-shadow: 0 0 0 3px rgba(14, 159, 142, 0.18); }
+.sys.warn i { background: #d97706; box-shadow: 0 0 0 3px rgba(217, 119, 6, 0.18); }
+.sys span, .role span, .libRow span { color: var(--i-muted); font-size: 11.5px; }
+.role { display: flex; flex-direction: column; padding: 8px 10px; margin-bottom: 6px; border-radius: 8px; background: #fff; border-left: 4px solid #d97706; }
+.role.ctl { border-color: #4f46e5; } .role.rc { border-color: #0284c7; } .role.op { border-color: #dc2626; } .role.oe { border-color: #0e9f8e; }
+.libRow { display: grid; grid-template-columns: 1fr auto; padding: 7px 0; border-bottom: 1px solid #d9e3ee; }
+.libRow span { grid-column: 1; } .libRow em { grid-row: 1 / span 2; grid-column: 2; align-self: center; font-style: normal; font-size: 11px; color: #285580; background: #d9e6f2; padding: 2px 8px; border-radius: 999px; }
